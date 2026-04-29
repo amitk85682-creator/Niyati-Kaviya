@@ -18,6 +18,11 @@ from config import Config, logger
 from database import db
 from ai_engine import ai_engine
 from memory import get_memory
+from media import (
+    should_send_image, should_send_sticker,
+    get_mood_image, get_context_sticker,
+    detect_mood_from_text,
+)
 from utils import (
     rate_limiter,
     is_user_talking_to_others,
@@ -67,7 +72,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 🔴 SMART REPLY/MENTION DETECTION (Groups only)
     # ════════════════════════════════════════════════════════════════════
     if is_group:
-        if is_user_talking_to_others(message, bot_username, bot_id):
+        if is_user_talking_to_others(message, bot_username, bot_id, bot_name):
             logger.debug(f"👥 Skipping - User {user.id} is talking to others ({bot_name})")
             return
 
@@ -147,28 +152,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         should_respond = False
         bot_mention = f"@{bot_username}".lower()
+        msg_lower = user_message.lower()
 
-        # 1. Bot mentioned
-        if bot_mention in user_message.lower():
+        # 1. Bot @mentioned
+        if bot_mention in msg_lower:
             should_respond = True
             user_message = re.sub(rf'@{bot_username}', '', user_message, flags=re.IGNORECASE).strip()
+            logger.info(f"👆 [{bot_name}] Mentioned by {user.first_name}")
 
-        # 2. Reply to bot's message
+        # 2. Bot name mentioned (e.g. "niyati", "kavya")
+        elif bot_name.lower() in msg_lower:
+            should_respond = True
+            logger.info(f"👆 [{bot_name}] Name mentioned by {user.first_name}")
+
+        # 3. Reply to bot's message
         elif message.reply_to_message and message.reply_to_message.from_user:
             if message.reply_to_message.from_user.id == bot_id:
                 should_respond = True
-                # Track that this is a reply chain
                 reply_to_user_name = user.first_name
+                logger.info(f"↩️ [{bot_name}] Reply from {user.first_name}")
 
-        # 3. Random response
+        # 4. Random response (low chance)
         if not should_respond:
             if random.random() < Config.GROUP_RESPONSE_RATE:
                 should_respond = True
+                logger.info(f"🎲 [{bot_name}] Random reply to {user.first_name}")
             else:
                 return
 
         await db.get_or_create_group(bot_name, chat.id, chat.title)
-        await db.log_user_activity(user.id, f"group_message:{chat.id}")
 
     if is_private:
         await db.get_or_create_user(bot_name, user.id, user.first_name, user.username)
@@ -222,6 +234,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_to=message.message_id if is_group else None,
             )
             logger.info(f"✅ [{bot_name}] Sent {len(responses)} msgs to {user.id}")
+
+            # ── MOOD IMAGE (very rare, private only) ──
+            if is_private and should_send_image():
+                detected_mood = detect_mood_from_text(user_message)
+                img_url = get_mood_image(bot_name, detected_mood)
+                if img_url:
+                    try:
+                        await context.bot.send_photo(
+                            chat_id=chat.id, photo=img_url,
+                        )
+                        logger.info(f"🖼️ [{bot_name}] Sent mood image ({detected_mood}) to {user.id}")
+                    except Exception as e:
+                        logger.debug(f"Image send failed: {e}")
+
+            # ── STICKER (occasional, based on conversation) ──
+            if should_send_sticker():
+                sticker_id = get_context_sticker(bot_name, user_message)
+                if sticker_id:
+                    try:
+                        await context.bot.send_sticker(
+                            chat_id=chat.id, sticker=sticker_id,
+                        )
+                        logger.info(f"🎭 [{bot_name}] Sent sticker to {user.id}")
+                    except Exception as e:
+                        logger.debug(f"Sticker send failed: {e}")
+
         else:
             logger.warning(f"⚠️ [{bot_name}] No responses generated for user {user.id}")
 
