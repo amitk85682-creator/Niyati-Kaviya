@@ -30,19 +30,19 @@ class AIEngine:
         self.groq_keys = Config.GROQ_API_KEYS_LIST
         self.gemini_keys = Config.GEMINI_API_KEYS_LIST
 
-        # Merge all keys with priority
+        # Priority order: Groq (fast & free) → Gemini → OpenAI (fallback)
         self.all_keys = []
-        for k in self.openai_keys:
-            self.all_keys.append({"type": "openai", "key": k})
         for k in self.groq_keys:
             self.all_keys.append({"type": "groq", "key": k})
         for k in self.gemini_keys:
             self.all_keys.append({"type": "gemini", "key": k})
+        for k in self.openai_keys:
+            self.all_keys.append({"type": "openai", "key": k})
 
         self.current_index = 0
         self.client = None
         self._initialize_client()
-        logger.info(f"🤖 AI Engine initialized with {len(self.all_keys)} total keys.")
+        logger.info(f"🤖 AI Engine: {len(self.groq_keys)} Groq, {len(self.gemini_keys)} Gemini, {len(self.openai_keys)} OpenAI keys")
 
     def _initialize_client(self):
         """Initialize Client based on Key Type"""
