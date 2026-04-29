@@ -71,12 +71,12 @@ class AIEngine:
         self._initialize_client()
         return True
 
-    async def _call_gpt(self, messages: List[Dict], max_tokens: int = 200,
-                         temp: float = 0.8) -> Optional[str]:
+    async def _call_gpt(self, messages: List[Dict], max_tokens: int = 350,
+                         temp: float = 0.85) -> Optional[str]:
         """Unified caller for OpenAI, Groq, and Gemini"""
         attempts = len(self.all_keys) if self.all_keys else 1
 
-        for _ in range(attempts):
+        for attempt_num in range(attempts):
             if not self.all_keys:
                 break
 
@@ -84,46 +84,71 @@ class AIEngine:
             try:
                 # OpenAI or Groq
                 if curr['type'] in ["openai", "groq"]:
-                    model_name = "gpt-4o-mini" if curr['type'] == "openai" else "llama-3.3-70b-versatile"
-                    response = await self.client.chat.completions.create(
-                        model=model_name,
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=temp,
-                        presence_penalty=0.6
-                    )
-                    return response.choices[0].message.content.strip()
+                    model_name = "gpt-4o-mini" if curr['type'] == "openai" else Config.GROQ_MODEL
+
+                    # Build params - Groq/Llama doesn't handle presence_penalty well
+                    params = {
+                        "model": model_name,
+                        "messages": messages,
+                        "max_tokens": max_tokens,
+                        "temperature": temp,
+                    }
+                    if curr['type'] == "openai":
+                        params["presence_penalty"] = 0.6
+
+                    response = await self.client.chat.completions.create(**params)
+                    result = response.choices[0].message.content
+
+                    if result:
+                        result = result.strip()
+                        logger.debug(f"🤖 AI ({curr['type']}): {result[:80]}...")
+                        return result
+                    else:
+                        logger.warning(f"⚠️ Empty response from {curr['type']}")
+                        self._rotate()
+                        continue
 
                 # Gemini
                 elif curr['type'] == "gemini":
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/{Config.GEMINI_MODEL}:generateContent?key={curr['key']}"
 
                     # Convert messages to Gemini format
+                    system_text = ""
                     contents = []
                     for m in messages:
                         if m['role'] == 'system':
-                            contents.append({"role": "user", "parts": [{"text": f"[System]: {m['content']}"}]})
+                            system_text = m['content']
                         else:
                             role = "model" if m['role'] == "assistant" else "user"
                             contents.append({"role": role, "parts": [{"text": m['content']}]})
 
+                    payload = {
+                        "contents": contents,
+                        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temp}
+                    }
+                    # Gemini supports systemInstruction
+                    if system_text:
+                        payload["systemInstruction"] = {"parts": [{"text": system_text}]}
+
                     async with httpx.AsyncClient(timeout=30.0) as client:
-                        resp = await client.post(url, json={
-                            "contents": contents,
-                            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temp}
-                        })
+                        resp = await client.post(url, json=payload)
                         if resp.status_code == 200:
-                            return resp.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+                            data = resp.json()
+                            result = data['candidates'][0]['content']['parts'][0]['text'].strip()
+                            logger.debug(f"🤖 AI (gemini): {result[:80]}...")
+                            return result
                         else:
-                            raise Exception(f"Gemini Error: {resp.status_code}")
+                            raise Exception(f"Gemini {resp.status_code}: {resp.text[:100]}")
 
             except Exception as e:
-                logger.warning(f"❌ {curr['type'].upper()} Key Failed: {str(e)[:50]}. Rotating...")
-                await asyncio.sleep(1)
+                logger.warning(f"❌ {curr['type'].upper()} Failed (attempt {attempt_num+1}): {str(e)[:80]}. Rotating...")
+                await asyncio.sleep(0.5)
                 if not self._rotate():
                     break
 
+        logger.error("❌ ALL AI providers failed!")
         return None
+
 
     # ========== PUBLIC API ==========
 
