@@ -83,9 +83,8 @@ class Config:
     DEFAULT_TIMEZONE = os.getenv('DEFAULT_TIMEZONE', 'Asia/Kolkata')
 
     # ── Server ──
-    # HEALTH_PORT for health check (PORT env may be used by PostgreSQL/Render)
-    _raw_port = int(os.getenv('HEALTH_PORT', os.getenv('PORT', '10000')))
-    PORT = 10000 if _raw_port == 5432 else _raw_port
+    # Render sets PORT env var - app MUST bind to it for health checks
+    PORT = int(os.getenv('PORT', '10000'))
 
     # ── Features ──
     MULTI_MESSAGE_ENABLED = os.getenv('MULTI_MESSAGE_ENABLED', 'true').lower() == 'true'
