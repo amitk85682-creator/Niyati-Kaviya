@@ -1,0 +1,27 @@
+# Telegram Bot
+python-telegram-bot[job-queue]
+
+# OpenAI API
+openai
+
+# Async HTTP
+aiohttp
+httpx
+
+# Timezone
+pytz
+
+# Supabase (optional)
+supabase
+
+# Database driver (optional)
+psycopg2-binary
+
+# Groq (optional, uses OpenAI client)
+groq
+
+# Gemini (optional, uses httpx directly)
+google-generativeai
+
+# Env
+python-dotenv
