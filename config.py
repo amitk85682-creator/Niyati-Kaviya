@@ -53,10 +53,10 @@ class Config:
     # Groq
     GROQ_API_KEYS_STR = os.getenv('GROQ_API_KEYS', '')
     GROQ_API_KEYS_LIST = [k.strip() for k in GROQ_API_KEYS_STR.split(',') if k.strip()]
-    GROQ_MODEL = "llama-3.3-70b-versatile"
+    GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')
 
     # Gemini
-    GEMINI_MODEL = "gemini-2.5-flash"
+    GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
     GEMINI_API_KEYS_STR = os.getenv('GEMINI_API_KEYS', '')
     GEMINI_API_KEYS_LIST = [k.strip() for k in GEMINI_API_KEYS_STR.split(',') if k.strip()]
 
