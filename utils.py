@@ -242,7 +242,7 @@ rate_limiter = RateLimiter()
 # SMART REPLY/MENTION DETECTION
 # ============================================================================
 
-def is_user_talking_to_others(message: Message, bot_username: str, bot_id: int) -> bool:
+def is_user_talking_to_others(message: Message, bot_username: str, bot_id: int, bot_name: str = "") -> bool:
     """
     Check if user is replying to another user OR mentioning other users.
     Returns True if bot should NOT respond.
@@ -261,11 +261,11 @@ def is_user_talking_to_others(message: Message, bot_username: str, bot_id: int) 
         # If replied to another user (not bot)
         if replied_user.username:
             if replied_user.username.lower() != bot_username_lower:
-                if f"@{bot_username_lower}" not in text.lower():
+                if f"@{bot_username_lower}" not in text.lower() and (not bot_name or bot_name.lower() not in text.lower()):
                     return True
         else:
             if not replied_user.is_bot:
-                if f"@{bot_username_lower}" not in text.lower():
+                if f"@{bot_username_lower}" not in text.lower() and (not bot_name or bot_name.lower() not in text.lower()):
                     return True
 
     # CASE 2: Check for @mentions of other users
