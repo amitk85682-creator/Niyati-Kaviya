@@ -231,11 +231,13 @@ class Database:
 
             if Config.SUPABASE_URL and Config.SUPABASE_KEY:
                 try:
-                    self.client = SupabaseClient(
-                        Config.SUPABASE_URL.strip(),
-                        Config.SUPABASE_KEY.strip()
-                    )
+                    # Aggressively clean URL (remove whitespace, trailing slashes, newlines)
+                    clean_url = Config.SUPABASE_URL.strip().rstrip('/').replace('\n', '').replace('\r', '')
+                    clean_key = Config.SUPABASE_KEY.strip().replace('\n', '').replace('\r', '')
 
+                    logger.info(f"🔗 Connecting to Supabase: {clean_url[:40]}...")
+
+                    self.client = SupabaseClient(clean_url, clean_key)
                     self.connected = await self.client.verify_connection()
 
                     if self.connected:
