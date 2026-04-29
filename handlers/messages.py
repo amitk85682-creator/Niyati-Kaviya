@@ -183,6 +183,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
+        logger.info(f"💬 [{bot_name}] Processing: user={user.id} ({user.first_name}), "
+                     f"msg='{user_message[:50]}...', {'group' if is_group else 'private'}")
+
         # 🔴 FIX: generate_response now uses bot_name for character & memory
         responses = await ai_engine.generate_response(
             bot_name=bot_name,
@@ -193,6 +196,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_group=is_group,
             reply_to_user=reply_to_user_name
         )
+
+        logger.info(f"📤 [{bot_name}] Got {len(responses)} responses for user {user.id}")
 
         # Random Bonus (Private only)
         if is_private and random.random() < 0.1:
@@ -215,8 +220,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat.id,
                 responses,
                 reply_to=message.message_id if is_group else None,
-                parse_mode=ParseMode.HTML
             )
+            logger.info(f"✅ [{bot_name}] Sent {len(responses)} msgs to {user.id}")
+        else:
+            logger.warning(f"⚠️ [{bot_name}] No responses generated for user {user.id}")
 
     except Exception as e:
         logger.error(f"❌ Message handling error ({bot_name}): {e}", exc_info=True)
