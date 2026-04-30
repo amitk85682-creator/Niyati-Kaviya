@@ -18,6 +18,8 @@
 """
 
 import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 print("DEBUG: main.py loaded, starting imports...", flush=True)
 
 try:
@@ -29,6 +31,8 @@ try:
     print("DEBUG: database imported", flush=True)
     from health import health_server
     print("DEBUG: health imported", flush=True)
+    import media  # Pre-load so handlers can find it
+    print("DEBUG: media imported", flush=True)
     from bot import create_bot, setup_jobs
     print("DEBUG: bot imported", flush=True)
 except Exception as e:
