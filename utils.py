@@ -244,31 +244,38 @@ rate_limiter = RateLimiter()
 
 def is_user_talking_to_others(message: Message, bot_username: str, bot_id: int, bot_name: str = "") -> bool:
     """
-    Check if user is replying to another user OR mentioning other users.
+    Check if user is replying to another HUMAN user OR mentioning other HUMAN users.
     Returns True if bot should NOT respond.
+    
+    🔴 FIX: If user replies to the OTHER BOT, we return False 
+    (don't skip) — so both bots get a chance to participate.
+    This creates the "3 real people chatting" feel.
     """
     text = message.text or ""
     bot_username_lower = bot_username.lower().lstrip('@')
 
-    # CASE 1: Check if user is REPLYING to someone else (not bot)
+    # CASE 1: Check if user is REPLYING to someone else
     if message.reply_to_message and message.reply_to_message.from_user:
         replied_user = message.reply_to_message.from_user
 
-        # If replied to bot, bot should respond
+        # If replied to THIS bot → definitely respond
         if replied_user.id == bot_id:
             return False
 
-        # If replied to another user (not bot)
+        # If replied to ANOTHER BOT → DON'T skip (let cross-bot logic handle it)
+        if replied_user.is_bot:
+            return False
+
+        # If replied to a REAL USER (not a bot) → skip unless bot is mentioned
         if replied_user.username:
             if replied_user.username.lower() != bot_username_lower:
                 if f"@{bot_username_lower}" not in text.lower() and (not bot_name or bot_name.lower() not in text.lower()):
                     return True
         else:
-            if not replied_user.is_bot:
-                if f"@{bot_username_lower}" not in text.lower() and (not bot_name or bot_name.lower() not in text.lower()):
-                    return True
+            if f"@{bot_username_lower}" not in text.lower() and (not bot_name or bot_name.lower() not in text.lower()):
+                return True
 
-    # CASE 2: Check for @mentions of other users
+    # CASE 2: Check for @mentions of other users (not bots)
     if message.entities:
         bot_mentioned = False
         other_user_mentioned = False
