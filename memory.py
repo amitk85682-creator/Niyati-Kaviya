@@ -2,7 +2,8 @@
 ╔══════════════════════════════════════════════════════╗
 ║           MEMORY MANAGER                              ║
 ║   Per-User + Per-Group Memory with Context Builder    ║
-║   🔴 FIXES: User isolation, Group context, Thread     ║
+║   🔴 FIXES: Shared group memory across bots           ║
+║   Both bots see ALL messages (users + each other)     ║
 ╚══════════════════════════════════════════════════════╝
 """
 
@@ -14,23 +15,52 @@ from config import Config, logger
 from database import db
 
 
+# ============================================================================
+# SHARED GROUP MEMORY (Global - shared across ALL bot instances)
+# ============================================================================
+# This is the KEY fix: Both Niyati and Kavya see the SAME conversation thread
+# including each other's messages. This makes them feel like 3 real people.
+
+_shared_group_threads: Dict[int, deque] = defaultdict(
+    lambda: deque(maxlen=50)
+)
+
+
+def add_shared_group_message(chat_id: int, sender_name: str, sender_id: int,
+                              content: str, is_bot: bool = False, bot_name: str = None):
+    """
+    Add a message to the shared group thread.
+    Used by ALL participants: users AND bots.
+    """
+    _shared_group_threads[chat_id].append({
+        'sender_name': sender_name,
+        'sender_id': sender_id,
+        'content': content,
+        'is_bot': is_bot,
+        'bot_name': bot_name,  # 'niyati', 'kavya', or None for users
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    })
+
+
+def get_shared_group_context(chat_id: int, limit: int = 15) -> List[Dict]:
+    """
+    Get the shared group conversation for AI context.
+    Returns messages from ALL participants (users + bots).
+    """
+    thread = list(_shared_group_threads.get(chat_id, []))
+    return thread[-limit:]
+
+
 class MemoryManager:
     """
     Per-user, per-bot memory manager.
     
-    FIXES the 3 critical bugs:
-    1. Group context now includes user-specific history
-    2. User identity is tracked and passed to AI
-    3. Each bot has its own memory space
+    Group memory is now SHARED across bots via _shared_group_threads.
+    Private memory remains isolated per-bot.
     """
 
     def __init__(self, bot_name: str):
         self.bot_name = bot_name
-        
-        # Group conversation tracking: {chat_id: deque of {user_name, user_id, content}}
-        self._group_threads: Dict[int, deque] = defaultdict(
-            lambda: deque(maxlen=30)
-        )
         
         # Track who the bot last replied to in each group
         self._last_reply_to: Dict[int, int] = {}  # {chat_id: user_id}
@@ -65,54 +95,83 @@ class MemoryManager:
         """Clear private chat memory"""
         await db.clear_user_memory(self.bot_name, user_id)
 
-    # ========== GROUP CHAT MEMORY ==========
+    # ========== GROUP CHAT MEMORY (SHARED) ==========
 
     def add_group_message(self, chat_id: int, user_name: str, user_id: int, content: str):
         """
-        Track message in group conversation.
-        Stores user identity with each message.
+        Track user message in SHARED group conversation.
+        Both bots will see this message.
         """
-        self._group_threads[chat_id].append({
-            'user_name': user_name,
-            'user_id': user_id,
-            'content': content,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+        add_shared_group_message(
+            chat_id=chat_id,
+            sender_name=user_name,
+            sender_id=user_id,
+            content=content,
+            is_bot=False,
+            bot_name=None
+        )
         
         # Also save to DB for persistence
         db.add_group_message(chat_id, user_name, user_id, content)
 
+    def add_bot_response(self, chat_id: int, response_text: str):
+        """
+        Save THIS bot's response to shared group memory.
+        So the OTHER bot can see what was said.
+        """
+        display_name = self.bot_name.capitalize()  # 'Niyati' or 'Kavya'
+        add_shared_group_message(
+            chat_id=chat_id,
+            sender_name=display_name,
+            sender_id=0,  # Bot's own message
+            content=response_text,
+            is_bot=True,
+            bot_name=self.bot_name
+        )
+
     def get_group_context(self, chat_id: int, current_user_id: int,
                           current_user_name: str) -> List[Dict]:
         """
-        Build group context for AI.
+        Build group context for AI from SHARED memory.
         
-        Returns recent group messages WITH user identity,
-        so the AI knows WHO said WHAT.
+        Returns recent group messages WITH identity,
+        so the AI knows WHO said WHAT — including the other bot.
         
         Format for AI:
         [
             {"role": "user", "content": "[Rahul]: kya haal hai"},
+            {"role": "assistant", "content": "[Niyati]: hiii! sab badiya?"},
+            {"role": "user", "content": "[Kavya]: hey Rahul 💜"},
             {"role": "user", "content": "[Priya]: main theek hu"},
-            {"role": "assistant", "content": "hiii Rahul! sab badiya?"},
         ]
         """
-        thread = list(self._group_threads.get(chat_id, []))
-        
-        # Take last N messages
-        recent = thread[-10:]
+        shared = get_shared_group_context(chat_id, limit=15)
         
         context = []
-        for msg in recent:
-            user_name = msg.get('user_name', 'Someone')
-            uid = msg.get('user_id', 0)
+        for msg in shared:
+            sender = msg.get('sender_name', 'Someone')
             content = msg.get('content', '')
+            is_bot = msg.get('is_bot', False)
+            msg_bot_name = msg.get('bot_name', None)
             
-            # Tag each message with the user's name
-            context.append({
-                'role': 'user',
-                'content': f"[{user_name} (ID:{uid})]: {content}"
-            })
+            # If this message is from THIS bot, mark as assistant
+            if is_bot and msg_bot_name == self.bot_name:
+                context.append({
+                    'role': 'assistant',
+                    'content': content
+                })
+            # If from the OTHER bot, show as a named participant
+            elif is_bot:
+                context.append({
+                    'role': 'user',
+                    'content': f"[{sender}]: {content}"
+                })
+            # User message
+            else:
+                context.append({
+                    'role': 'user',
+                    'content': f"[{sender}]: {content}"
+                })
         
         return context
 
@@ -132,8 +191,8 @@ class MemoryManager:
         """
         Build the complete context to send to AI.
         
-        This is the CORE function that fixes memory issues.
-        It properly isolates user context and includes identity info.
+        Group context is now from SHARED memory — includes
+        messages from users AND the other bot.
         """
         if is_group:
             context = self.get_group_context(chat_id, user_id, user_name)
