@@ -98,7 +98,9 @@ class Config:
     USER_COOLDOWN_SECONDS = int(os.getenv('USER_COOLDOWN_SECONDS', '3'))
     RANDOM_SHAYARI_CHANCE = float(os.getenv('RANDOM_SHAYARI_CHANCE', '0.15'))
     RANDOM_MEME_CHANCE = float(os.getenv('RANDOM_MEME_CHANCE', '0.10'))
-    GROUP_RESPONSE_RATE = float(os.getenv('GROUP_RESPONSE_RATE', '0.3'))
+    GROUP_RESPONSE_RATE = float(os.getenv('GROUP_RESPONSE_RATE', '0.35'))
+    CROSS_BOT_CHIP_IN_RATE = float(os.getenv('CROSS_BOT_CHIP_IN_RATE', '0.30'))
+    BOTH_BOTS_RESPOND_RATE = float(os.getenv('BOTH_BOTS_RESPOND_RATE', '0.15'))
     PRIVACY_MODE = os.getenv('PRIVACY_MODE', 'false').lower() == 'true'
 
     @classmethod
