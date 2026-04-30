@@ -18,7 +18,7 @@ from config import Config, logger
 from database import db
 from ai_engine import ai_engine
 from memory import get_memory
-from media import (
+from handlers.media import (
     should_send_image, should_send_sticker,
     get_mood_image, get_context_sticker,
     detect_mood_from_text,
