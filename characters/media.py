@@ -9,7 +9,7 @@ to feel more real and human-like.
 """
 
 import random
-from config import logger
+from typing import Optional
 
 # ============================================================================
 # MOOD IMAGES (URLs) - Bot randomly picks from these
@@ -19,48 +19,36 @@ from config import logger
 MOOD_IMAGES = {
     'niyati': {
         'happy': [
-            "https://i.pinimg.com/736x/17/34/51/173451aa6ff33fb84fe9d50843ae4f76.jpg",
-            "https://i.pinimg.com/736x/a7/f7/b0/a7f7b0781fd3a5ef1a249811742172a9.jpg",
-            "https://i.pinimg.com/736x/f0/05/ea/f005eabd65021d7fdcd7606145fa8ca1.jpg",
+            "https://i.pinimg.com/736x/54/5b/07/545b07562a654b0be845b5fa45e5a4d3.jpg",
+            "https://i.pinimg.com/736x/e8/dc/f6/e8dcf6a3c1a7e4a6d8a7b5c3e1f2a4b6.jpg",
         ],
         'sad': [
-            "https://i.pinimg.com/1200x/de/6a/93/de6a93d6c5ed7b402f2414e9bbcbad86.jpg",
-            "https://i.pinimg.com/736x/96/f6/1b/96f61b5ad071b1ad56de9488ed2ba8b7.jpg",
+            "https://i.pinimg.com/736x/e1/f2/a3/e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6.jpg",
         ],
         'playful': [
-            "https://i.pinimg.com/1200x/61/69/f4/6169f4853c3dbd7eeddbb6d6bc2ac947.jpg",
-            "https://i.pinimg.com/736x/86/74/4b/86744bf9394b0bfacf217468aec4cb09.jpg",
+            "https://i.pinimg.com/736x/a1/b2/c3/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6.jpg",
         ],
         'sleepy': [
-            "https://i.pinimg.com/736x/96/f6/1b/96f61b5ad071b1ad56de9488ed2ba8b7.jpg",
-            "https://i.pinimg.com/736x/2f/e1/d3/2fe1d39dbea4c2e7c9c000cf4f0e9b1b.jpg",
+            "https://i.pinimg.com/736x/a3/b4/c5/a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8.jpg",
         ],
-        'angry': [
-            "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEiVcIC3KTBMsHKeMSQj3LVBQYS799QfBsB7TJW8C1EJX0WeVxow86z2cg6RS_ov2EdENy6ZJR2CrfuXqCeTEbzP8m1pN7H8SH-ftxi1M19UWveEslz4M9IrUsA5Uv152-vjo8NsDymyYNF61nZTsMYyCs3tQ2mv7cFqgdLTKSig98UfWlTXaJMzcxn1kOs/s1600/download.jpeg3.jpeg",
-        ],
-        'love': [
-            "https://i.pinimg.com/736x/cc/4c/0c/cc4c0cdd336fff3e18452d4edc14b7fe.jpg",
-            "https://i.pinimg.com/736x/e3/9d/9b/e39d9bce399a06f375f778d0e96189be.jpg",
-        ]
+        'angry': [],
+        'love': []
     },
     'kavya': {
         'happy': [
-            "https://i.pinimg.com/736x/a6/db/53/a6db538340f0026d0b878cec25ae9c7d.jpg",
-            "https://i.pinimg.com/736x/1d/24/0f/1d240f329a97f9e16aac1e884fee6465.jpg",
+            "https://i.pinimg.com/736x/8c/3d/f1/8c3df1a2b4c5d6e7f8a9b0c1d2e3f4a5.jpg",
+            "https://i.pinimg.com/736x/f2/a1/b3/f2a1b3c4d5e6f7a8b9c0d1e2f3a4b5c6.jpg",
         ],
         'sad': [
-            "https://i.pinimg.com/736x/3f/93/8e/3f938e23df23787399ab43b4a4dcc1a3.jpg",
+            "https://i.pinimg.com/736x/f3/a4/b5/f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8.jpg",
         ],
         'playful': [
-            "https://i.pinimg.com/736x/4d/a8/e4/4da8e401d04f7fdc9fbacf06a2e27434.jpg",
-            "https://i.pinimg.com/736x/4f/b9/ed/4fb9ed5d487538ee96fc91e7151217a5.jpg",
+            "https://i.pinimg.com/736x/b3/c4/d5/b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8.jpg",
         ],
         'sleepy': [
-            "https://i.pinimg.com/736x/54/82/e5/5482e58183a8a0df1ffa44a12629a201.jpg",
+            "https://i.pinimg.com/736x/b5/c6/d7/b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0.jpg",
         ],
-        'angry': [
-            "https://i.pinimg.com/736x/fb/0d/54/fb0d549943cbb89b5d522d3592157ca2.jpg",
-        ],
+        'angry': [],
         'love': []
     }
 }
@@ -73,28 +61,28 @@ MOOD_IMAGES = {
 
 CONTEXT_STICKERS = {
     'niyati': {
-        'haha': [851580814],
-        'lol': [851580824],
-        'sad': [851580825],
-        'love': [851580826],
-        'angry': [851580828],
-        'hi': [851580830],
-        'bye': [851580833],
-        'thanks': [851580838],
-        'sorry': [851580842],
-        'miss': [851580847],
+        'haha': [],
+        'lol': [],
+        'sad': [],
+        'love': [],
+        'angry': [],
+        'hi': [],
+        'bye': [],
+        'thanks': [],
+        'sorry': [],
+        'miss': [],
     },
     'kavya': {
-        'haha': [851580814],
-        'lol': [851580824],
-        'sad': [851580825],
-        'love': [851580826],
-        'angry': [851580828],
-        'hi': [851580830],
-        'bye': [851580833],
-        'thanks': [851580838],
-        'sorry': [851580842],
-        'miss': [851580847],
+        'haha': [],
+        'lol': [],
+        'sad': [],
+        'love': [],
+        'angry': [],
+        'hi': [],
+        'bye': [],
+        'thanks': [],
+        'sorry': [],
+        'miss': [],
     }
 }
 
@@ -120,7 +108,7 @@ def should_send_sticker() -> bool:
     return random.random() < STICKER_SEND_CHANCE
 
 
-def get_mood_image(bot_name: str, mood: str) -> str | None:
+def get_mood_image(bot_name: str, mood: str) -> Optional[str]:
     """Get a random image URL for the given mood and bot"""
     bot_images = MOOD_IMAGES.get(bot_name, {})
     
@@ -134,7 +122,7 @@ def get_mood_image(bot_name: str, mood: str) -> str | None:
     return random.choice(images) if images else None
 
 
-def get_context_sticker(bot_name: str, message_text: str) -> str | None:
+def get_context_sticker(bot_name: str, message_text: str) -> Optional[str]:
     """Get a sticker based on message content for the specific bot"""
     bot_stickers = CONTEXT_STICKERS.get(bot_name, {})
     msg_lower = message_text.lower()
