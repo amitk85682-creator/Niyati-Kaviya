@@ -2,7 +2,8 @@
 ╔══════════════════════════════════════════════════════╗
 ║           MAIN MESSAGE HANDLER                        ║
 ║   Private + Group with Smart Detection                ║
-║   🔴 FIXED: Memory isolation, User identity tracking  ║
+║   🔴 FIXED: Cross-bot awareness, Shared memory,      ║
+║   3 real people chatting feel                          ║
 ╚══════════════════════════════════════════════════════╝
 """
 
@@ -96,6 +97,20 @@ def detect_mood_from_text(text):
     return 'happy'
 
 
+# ════════════════════════════════════════════════════════════════════
+# OTHER BOT NAMES (for cross-bot detection)
+# ════════════════════════════════════════════════════════════════════
+
+_OTHER_BOT_NAMES = {
+    'niyati': 'kavya',
+    'kavya': 'niyati',
+}
+
+_OTHER_BOT_USERNAMES = {
+    'niyati': Config.KAVYA_BOT_USERNAME.lower(),
+    'kavya': Config.NIYATI_BOT_USERNAME.lower(),
+}
+
 
 def _get_bot_name(context: ContextTypes.DEFAULT_TYPE) -> str:
     """Get bot_name from context.bot_data"""
@@ -107,14 +122,36 @@ def _get_bot_username(context: ContextTypes.DEFAULT_TYPE) -> str:
     return context.bot_data.get('bot_username', 'Niyati_personal_bot')
 
 
+def _is_other_bot_mentioned(msg_lower: str, bot_name: str) -> bool:
+    """Check if the OTHER bot is mentioned in the message"""
+    other_name = _OTHER_BOT_NAMES.get(bot_name, '')
+    other_username = _OTHER_BOT_USERNAMES.get(bot_name, '')
+    
+    if other_name and other_name.lower() in msg_lower:
+        return True
+    if other_username and f"@{other_username}" in msg_lower:
+        return True
+    return False
+
+
+def _is_reply_to_other_bot(message, bot_id: int) -> bool:
+    """Check if message is a reply to the OTHER bot (not this one)"""
+    if message.reply_to_message and message.reply_to_message.from_user:
+        replied = message.reply_to_message.from_user
+        # Not this bot, but IS a bot
+        if replied.id != bot_id and replied.is_bot:
+            return True
+    return False
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handle all text messages.
     
-    🔴 FIXED:
-    1. Memory isolation - Each bot has its own memory per user
-    2. Group context - Now includes user identity (who said what)
-    3. Reply tracking - Bot knows who it's replying to
+    🔴 MAJOR UPDATE: Cross-bot awareness
+    - Both Niyati and Kavya participate in groups like 3 real people
+    - Shared memory so they see each other's messages
+    - Smart response logic: sometimes one responds, sometimes both
     """
     message = update.message
     if not message or not message.text:
@@ -137,10 +174,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ════════════════════════════════════════════════════════════════════
     # 🔴 SMART REPLY/MENTION DETECTION (Groups only)
+    # Now allows cross-bot participation
     # ════════════════════════════════════════════════════════════════════
     if is_group:
         if is_user_talking_to_others(message, bot_username, bot_id, bot_name):
-            logger.debug(f"👥 Skipping - User {user.id} is talking to others ({bot_name})")
+            logger.debug(f"👥 Skipping - User {user.id} is talking to other humans ({bot_name})")
             return
 
     # ════════════════════════════════════════════════════════════════════
@@ -209,49 +247,99 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ════════════════════════════════════════════════════════════════════
-    # GROUP RESPONSE DECISION
+    # 🔴 GROUP RESPONSE DECISION (Cross-Bot Aware)
+    # This is the KEY logic that creates "3 real people chatting" feel
     # ════════════════════════════════════════════════════════════════════
     reply_to_user_name = None
+    chip_in_delay = 0  # Extra delay when "chipping in" on other bot's conversation
 
     if is_group:
-        # 🔴 FIX: Track ALL group messages with user identity
+        # Save user's message to SHARED memory (both bots will see it)
         memory.add_group_message(chat.id, user.first_name, user.id, user_message)
 
         should_respond = False
         bot_mention = f"@{bot_username}".lower()
         msg_lower = user_message.lower()
 
-        # 1. Bot @mentioned
+        # ── CASE 1: THIS bot @mentioned ──
         if bot_mention in msg_lower:
             should_respond = True
             user_message = re.sub(rf'@{bot_username}', '', user_message, flags=re.IGNORECASE).strip()
             logger.info(f"👆 [{bot_name}] Mentioned by {user.first_name}")
 
-        # 2. Bot name mentioned (e.g. "niyati", "kavya")
-        elif bot_name.lower() in msg_lower:
+        # ── CASE 2: THIS bot's name mentioned ──
+        elif bot_name.lower() in msg_lower and not _is_other_bot_mentioned(msg_lower, bot_name):
             should_respond = True
             logger.info(f"👆 [{bot_name}] Name mentioned by {user.first_name}")
 
-        # 3. Reply to bot's message
+        # ── CASE 3: Reply to THIS bot's message ──
         elif message.reply_to_message and message.reply_to_message.from_user:
             if message.reply_to_message.from_user.id == bot_id:
                 should_respond = True
                 reply_to_user_name = user.first_name
                 logger.info(f"↩️ [{bot_name}] Reply from {user.first_name}")
 
-        # 4. Random response (low chance)
-        if not should_respond:
-            if random.random() < Config.GROUP_RESPONSE_RATE:
+        # ── CASE 4: Reply to OTHER bot → "chip in" chance ──
+        elif _is_reply_to_other_bot(message, bot_id):
+            if random.random() < Config.CROSS_BOT_CHIP_IN_RATE:
                 should_respond = True
-                logger.info(f"🎲 [{bot_name}] Random reply to {user.first_name}")
+                chip_in_delay = random.uniform(1.5, 3.5)  # Natural delay
+                logger.info(f"🤝 [{bot_name}] Chipping in on other bot's conversation")
+            else:
+                logger.debug(f"🤝 [{bot_name}] Other bot's conversation, skipping this time")
+                return
+
+        # ── CASE 5: OTHER bot mentioned → "chip in" chance ──
+        elif _is_other_bot_mentioned(msg_lower, bot_name):
+            if random.random() < Config.CROSS_BOT_CHIP_IN_RATE:
+                should_respond = True
+                chip_in_delay = random.uniform(1.5, 3.0)
+                logger.info(f"🤝 [{bot_name}] Chipping in - other bot was mentioned")
             else:
                 return
+
+        # ── CASE 6: General message (no mention/reply) ──
+        if not should_respond:
+            roll = random.random()
+            
+            if bot_name == 'niyati':
+                # Niyati: respond if roll < GROUP_RESPONSE_RATE
+                # Or both respond if roll < BOTH_BOTS_RESPOND_RATE
+                if roll < Config.BOTH_BOTS_RESPOND_RATE:
+                    should_respond = True  # Both will respond
+                    logger.info(f"🎲 [{bot_name}] Both bots responding to {user.first_name}")
+                elif roll < Config.GROUP_RESPONSE_RATE:
+                    should_respond = True
+                    logger.info(f"🎲 [{bot_name}] Random reply to {user.first_name}")
+                else:
+                    return
+            else:
+                # Kavya: respond in the "other half" of the range
+                # If Niyati responds at 0 to 0.35, Kavya responds at 0.35 to 0.70
+                # Both respond at 0 to 0.15
+                if roll < Config.BOTH_BOTS_RESPOND_RATE:
+                    should_respond = True  # Both respond
+                    chip_in_delay = random.uniform(2.0, 4.0)  # Kavya responds slightly later
+                    logger.info(f"🎲 [{bot_name}] Both bots responding to {user.first_name}")
+                elif Config.GROUP_RESPONSE_RATE <= roll < (Config.GROUP_RESPONSE_RATE * 2):
+                    should_respond = True
+                    logger.info(f"🎲 [{bot_name}] Random reply to {user.first_name}")
+                else:
+                    return
 
         await db.get_or_create_group(bot_name, chat.id, chat.title)
 
     if is_private:
         await db.get_or_create_user(bot_name, user.id, user.first_name, user.username)
         await db.log_user_activity(user.id, "private_message")
+
+    # ════════════════════════════════════════════════════════════════════
+    # 🔴 CHIP-IN DELAY (when bot is joining other bot's conversation)
+    # Makes it feel natural — like a friend jumping in after a moment
+    # ════════════════════════════════════════════════════════════════════
+    if chip_in_delay > 0:
+        logger.info(f"⏳ [{bot_name}] Waiting {chip_in_delay:.1f}s before chipping in...")
+        await asyncio.sleep(chip_in_delay)
 
     # ════════════════════════════════════════════════════════════════════
     # AI RESPONSE (Bot-Aware)
@@ -301,6 +389,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_to=message.message_id if is_group else None,
             )
             logger.info(f"✅ [{bot_name}] Sent {len(responses)} msgs to {user.id}")
+
+            # 🔴 SAVE BOT'S RESPONSE TO SHARED GROUP MEMORY
+            # So the other bot can see what this bot said
+            if is_group:
+                combined_response = ' '.join(responses)
+                memory.add_bot_response(chat.id, combined_response)
+                logger.info(f"💾 [{bot_name}] Saved response to shared group memory")
 
             # ── MOOD IMAGE (very rare, private only) ──
             if is_private and should_send_image():
