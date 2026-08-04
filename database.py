@@ -287,7 +287,7 @@ class Database:
 
         if self.connected and self.client:
             try:
-                users_list = await self.client.select('users', '*', {'user_id': user_id})
+                users_list = await self.client.select('users', '*', {'bot_name': bot_name, 'user_id': user_id})
 
                 if users_list and len(users_list) > 0:
                     user = users_list[0]
@@ -297,10 +297,11 @@ class Database:
                             'first_name': first_name,
                             'username': username,
                             'updated_at': datetime.now(timezone.utc).isoformat()
-                        }, {'user_id': user_id})
+                        }, {'bot_name': bot_name, 'user_id': user_id})
                     return user
                 else:
                     new_user = {
+                        'bot_name': bot_name,
                         'user_id': user_id,
                         'first_name': first_name or 'User',
                         'username': username,
@@ -344,7 +345,7 @@ class Database:
         """Get user conversation context (bot-aware)"""
         if self.connected and self.client:
             try:
-                users_list = await self.client.select('users', 'messages', {'user_id': user_id})
+                users_list = await self.client.select('users', 'messages', {'bot_name': bot_name, 'user_id': user_id})
                 if users_list and len(users_list) > 0:
                     messages = users_list[0].get('messages', '[]')
                     if isinstance(messages, str):
@@ -354,8 +355,6 @@ class Database:
                             messages = []
                     if not isinstance(messages, list):
                         messages = []
-                    # Filter to only this bot's messages for isolation
-                    messages = [m for m in messages if not m.get('bot') or m['bot'] == bot_name]
                     return messages[-Config.MAX_PRIVATE_MESSAGES:]
             except Exception as e:
                 logger.debug(f"Get context error: {e}")
@@ -377,7 +376,7 @@ class Database:
 
         if self.connected and self.client:
             try:
-                users_list = await self.client.select('users', 'messages,total_messages', {'user_id': user_id})
+                users_list = await self.client.select('users', 'messages,total_messages', {'bot_name': bot_name, 'user_id': user_id})
 
                 if users_list and len(users_list) > 0:
                     user_data = users_list[0]
@@ -398,7 +397,7 @@ class Database:
                         'messages': json.dumps(messages),
                         'total_messages': total,
                         'updated_at': datetime.now(timezone.utc).isoformat()
-                    }, {'user_id': user_id})
+                    }, {'bot_name': bot_name, 'user_id': user_id})
                 return
             except Exception as e:
                 logger.debug(f"Save message error: {e}")
@@ -421,7 +420,7 @@ class Database:
                 await self.client.update('users', {
                     'messages': json.dumps([]),
                     'updated_at': datetime.now(timezone.utc).isoformat()
-                }, {'user_id': user_id})
+                }, {'bot_name': bot_name, 'user_id': user_id})
                 logger.info(f"Memory cleared for user: {user_id} ({bot_name})")
                 return
             except Exception as e:
@@ -437,7 +436,7 @@ class Database:
 
         if self.connected and self.client:
             try:
-                users_list = await self.client.select('users', 'preferences', {'user_id': user_id})
+                users_list = await self.client.select('users', 'preferences', {'bot_name': bot_name, 'user_id': user_id})
 
                 if users_list and len(users_list) > 0:
                     prefs = users_list[0].get('preferences', '{}')
@@ -452,7 +451,7 @@ class Database:
                     await self.client.update('users', {
                         'preferences': json.dumps(prefs),
                         'updated_at': datetime.now(timezone.utc).isoformat()
-                    }, {'user_id': user_id})
+                    }, {'bot_name': bot_name, 'user_id': user_id})
                 return
             except Exception as e:
                 logger.debug(f"Update preference error: {e}")
@@ -467,7 +466,7 @@ class Database:
         """Get user preferences"""
         if self.connected and self.client:
             try:
-                users_list = await self.client.select('users', 'preferences', {'user_id': user_id})
+                users_list = await self.client.select('users', 'preferences', {'bot_name': bot_name, 'user_id': user_id})
 
                 if users_list and len(users_list) > 0:
                     prefs = users_list[0].get('preferences', '{}')
@@ -486,8 +485,8 @@ class Database:
 
         return {'meme_enabled': True, 'shayari_enabled': True, 'geeta_enabled': True}
 
-    async def get_all_users(self) -> List[Dict]:
-        """Get ALL users with Pagination"""
+    async def get_all_users(self, bot_name: str = None) -> List[Dict]:
+        """Get ALL users with Pagination (optionally filtered by bot_name)"""
         if self.connected and self.client:
             try:
                 all_data = []
@@ -495,7 +494,9 @@ class Database:
                 limit = 1000
 
                 while True:
-                    url = f"{self.client.rest_url}/users?select=user_id,first_name,username&offset={offset}&limit={limit}"
+                    url = f"{self.client.rest_url}/users?select=bot_name,user_id,first_name,username&offset={offset}&limit={limit}"
+                    if bot_name:
+                        url += f"&bot_name=eq.{bot_name}"
                     client = self.client._get_client()
                     response = await client.get(url)
 
@@ -514,25 +515,30 @@ class Database:
                 logger.error(f"Get all users error: {e}")
                 return []
 
-        # Local: return unique users across all bots
+        # Local: return unique users (filtered by bot_name if provided)
         seen = {}
         for k, v in self.local_users.items():
+            if bot_name and not k.startswith(f"{bot_name}_"):
+                continue
             uid = v.get('user_id')
             if uid and uid not in seen:
                 seen[uid] = v
         return list(seen.values())
 
-    async def get_user_count(self) -> int:
+    async def get_user_count(self, bot_name: str = None) -> int:
         """Get total user count"""
         if self.connected and self.client:
             try:
-                users = await self.client.select('users', 'user_id')
+                filters = {'bot_name': bot_name} if bot_name else None
+                users = await self.client.select('users', 'user_id', filters)
                 return len(users)
             except Exception as e:
                 logger.debug(f"User count error: {e}")
         # Count unique user IDs from local cache
         unique_ids = set()
-        for v in self.local_users.values():
+        for k, v in self.local_users.items():
+            if bot_name and not k.startswith(f"{bot_name}_"):
+                continue
             uid = v.get('user_id')
             if uid:
                 unique_ids.add(uid)
