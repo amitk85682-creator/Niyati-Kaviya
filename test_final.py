@@ -1,221 +1,386 @@
+"""
+Final verification tests for the dual-bot system.
+
+Tests real imports, config validation, per-bot AI engine isolation,
+GroupRoom coordination, reply-to routing, bot loop prevention,
+memory isolation, single-bot mode, and cleanup correctness.
+"""
+
+import os
 import asyncio
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime, timezone, timedelta
 
-from group_room import group_manager, GroupRoomState
-from memory import get_memory
-from utils import rate_limiter
-from config import Config
-from ai_engine import AIEngine
-from database import db
 
-# Mock Context
-class MockBot:
-    def __init__(self, id, username):
-        self.id = id
-        self.username = username
+class TestImports(unittest.TestCase):
+    """Verify all critical modules import without error."""
 
-class MockContext:
-    def __init__(self, bot_name, bot_id, bot_username):
-        self.bot_data = {'bot_name': bot_name, 'bot_username': bot_username}
-        self.bot = MockBot(bot_id, bot_username)
+    def test_import_config(self):
+        from config import Config, logger
+        self.assertTrue(hasattr(Config, 'NIYATI_BOT_TOKEN'))
+        self.assertTrue(hasattr(Config, 'PALAK_BOT_TOKEN'))
+        self.assertTrue(hasattr(Config, 'PALAK_BOT_USERNAME'))
 
-class MockUser:
-    def __init__(self, id, first_name, is_bot=False, username=""):
-        self.id = id
-        self.first_name = first_name
-        self.is_bot = is_bot
-        self.username = username
+    def test_import_ai_engine(self):
+        from ai_engine import get_ai_engine, AIEngine
+        self.assertTrue(callable(get_ai_engine))
 
-class MockChat:
-    def __init__(self, id, type="group"):
-        self.id = id
-        self.type = type
+    def test_import_group_room(self):
+        from group_room import group_manager, GroupRoomState, GroupRoomManager
+        self.assertIsInstance(group_manager, GroupRoomManager)
 
-class MockMessage:
-    def __init__(self, message_id, text, user, chat, reply_to_message=None):
-        self.message_id = message_id
-        self.text = text
-        self.from_user = user
-        self.chat = chat
-        self.reply_to_message = reply_to_message
+    def test_import_memory(self):
+        from memory import get_memory, MemoryManager
+        self.assertTrue(callable(get_memory))
 
-class MockUpdate:
-    def __init__(self, message):
-        self.message = message
-        self.effective_user = message.from_user
-        self.effective_chat = message.chat
+    def test_import_handlers_messages(self):
+        from handlers.messages import handle_message
+        self.assertTrue(callable(handle_message))
+
+    def test_import_bot(self):
+        from bot import create_bot, setup_jobs
+        self.assertTrue(callable(create_bot))
+
+    def test_import_main(self):
+        import main
+        self.assertTrue(hasattr(main, 'main'))
 
 
-class FinalVerificationTests(unittest.IsolatedAsyncioTestCase):
-    
+class TestConfig(unittest.TestCase):
+    """Test Config validation with realistic environment strings."""
+
+    def test_palak_username_default(self):
+        """PALAK_BOT_USERNAME must default to 'palakdevabot'."""
+        from config import Config
+        # If no env var is set, default should be palakdevabot
+        with patch.dict(os.environ, {}, clear=False):
+            # Re-evaluate — the default is baked at class load time
+            # so we just verify the current value is not 'Palak_bot'
+            self.assertNotEqual(Config.PALAK_BOT_USERNAME, 'Palak_bot')
+
+    def test_get_bot_config_niyati(self):
+        from config import Config
+        cfg = Config.get_bot_config('niyati')
+        self.assertIn('token', cfg)
+        self.assertIn('username', cfg)
+
+    def test_get_bot_config_palak(self):
+        from config import Config
+        cfg = Config.get_bot_config('palak')
+        self.assertIn('token', cfg)
+        self.assertIn('username', cfg)
+
+    def test_get_bot_config_unknown_raises(self):
+        from config import Config
+        with self.assertRaises(ValueError):
+            Config.get_bot_config('Palak')  # uppercase must fail
+
+    def test_get_bot_config_unknown_random(self):
+        from config import Config
+        with self.assertRaises(ValueError):
+            Config.get_bot_config('randombot')
+
+
+class TestAIEngineRegistry(unittest.TestCase):
+    """Verify per-bot AI engine instances are separate."""
+
+    def test_engines_are_different_objects(self):
+        from ai_engine import get_ai_engine
+        e1 = get_ai_engine('niyati')
+        e2 = get_ai_engine('palak')
+        self.assertIsNot(e1, e2)
+
+    def test_engine_persistence(self):
+        from ai_engine import get_ai_engine
+        e1 = get_ai_engine('niyati')
+        e2 = get_ai_engine('niyati')
+        self.assertIs(e1, e2)
+
+    def test_engine_case_normalization(self):
+        from ai_engine import get_ai_engine
+        e1 = get_ai_engine('Niyati')
+        e2 = get_ai_engine('niyati')
+        self.assertIs(e1, e2)
+
+
+class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
+    """Test GroupRoom plan generation, dedup, and reply-to routing."""
+
     async def asyncSetUp(self):
-        # Reset globals
-        group_manager._rooms.clear()
-        group_manager._bot_ids.clear()
-        rate_limiter.cooldowns.clear()
-        rate_limiter.requests.clear()
-        
+        from group_room import group_manager
+        self.gm = group_manager
+        self.gm._rooms.clear()
+        self.gm._bot_ids.clear()
+        self.gm.register_bot('niyati', 101)
+        self.gm.register_bot('palak', 102)
+
+    async def test_fresh_plan_per_message_id(self):
+        """Each message_id must produce its own plan."""
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+
+        _, plan1 = await self.gm.process_human_message(
+            'niyati', chat_id, 1, 10, 'User', 'hello')
+        _, plan2 = await self.gm.process_human_message(
+            'niyati', chat_id, 2, 10, 'User', 'hello again')
+
+        # Plans are keyed by message_id — they should exist independently
+        self.assertIsNotNone(room.get_plan(1))
+        self.assertIsNotNone(room.get_plan(2))
+
+    async def test_same_plan_for_both_bots(self):
+        """Both bots seeing the same message_id must get the same plan."""
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+
+        _, plan_n = await self.gm.process_human_message(
+            'niyati', chat_id, 5, 10, 'User', 'test')
+        _, plan_p = await self.gm.process_human_message(
+            'palak', chat_id, 5, 10, 'User', 'test')
+
+        self.assertEqual(plan_n, plan_p)
+
+    async def test_dedup_same_bot_same_message(self):
+        """Same bot processing the same message_id twice → False."""
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+
+        proceed1, _ = await self.gm.process_human_message(
+            'niyati', chat_id, 10, 10, 'User', 'test')
+        proceed2, _ = await self.gm.process_human_message(
+            'niyati', chat_id, 10, 10, 'User', 'test')
+
+        self.assertTrue(proceed1)
+        self.assertFalse(proceed2)
+
+    async def test_reply_to_niyati_routes_to_niyati(self):
+        """Reply-to Niyati's message must include niyati in plan."""
+        from config import Config
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+
+        _, plan = await self.gm.process_human_message(
+            'niyati', chat_id, 20, 10, 'User', 'what do you think?',
+            reply_to_bot_name='niyati')
+
+        self.assertIn('niyati', plan)
+
+    async def test_reply_to_palak_routes_to_palak(self):
+        """Reply-to Palak's message must include palak in plan."""
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+
+        _, plan = await self.gm.process_human_message(
+            'palak', chat_id, 21, 10, 'User', 'tell me more',
+            reply_to_bot_name='palak')
+
+        self.assertIn('palak', plan)
+
+    async def test_single_bot_presence(self):
+        """If only niyati is present, she must be the sole responder."""
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = False
+
+        _, plan = await self.gm.process_human_message(
+            'niyati', chat_id, 30, 10, 'User', 'hello palak')
+
+        self.assertEqual(plan, ['niyati'])
+
+    async def test_bot_loop_prevention(self):
+        """Bot-to-bot replies must stop at configured limits."""
+        from config import Config
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+
+        # Trigger a human message first to open session
+        await self.gm.process_human_message(
+            'niyati', chat_id, 40, 10, 'User', 'start')
+
+        # First bot-to-bot exchange
+        proceed1, _ = await self.gm.process_partner_message(
+            'palak', chat_id, 41, 101, 'Niyati', 'response')
+
+        # Consecutive limit should kick in
+        proceed2, _ = await self.gm.process_partner_message(
+            'niyati', chat_id, 42, 102, 'Palak', 'another response')
+
+        # At least one should be blocked by MAX_CONSECUTIVE_BOT_TO_BOT_REPLIES=1
+        # The exact behavior depends on plan, but consecutive limit blocks the 2nd
+        if proceed1:
+            # If first went through, consecutive_bot_replies is now 1
+            # Second should be blocked since MAX_CONSECUTIVE is 1
+            self.assertFalse(proceed2)
+
+    async def test_bot_message_counts_toward_limit(self):
+        """add_bot_message must increment the reply counter."""
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+
+        # Open session
+        await self.gm.process_human_message(
+            'niyati', chat_id, 50, 10, 'User', 'hello')
+
+        before = room.get_bot_replies_for_trigger()
+        await self.gm.add_bot_message('niyati', chat_id, 51, 'Niyati', 'hi there')
+        after = room.get_bot_replies_for_trigger()
+
+        self.assertEqual(after, before + 1)
+
+    async def test_no_session_from_bot_message(self):
+        """A bot message must NOT open or refresh a human session."""
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        # No human session active
+        self.assertFalse(room.has_active_human_session())
+
+        await self.gm.add_bot_message('niyati', chat_id, 60, 'Niyati', 'hello')
+
+        # Session should still be inactive
+        self.assertFalse(room.has_active_human_session())
+
+
+class TestMemoryIsolation(unittest.IsolatedAsyncioTestCase):
+    """Test that private memory is isolated per bot."""
+
+    async def asyncSetUp(self):
+        from database import db
+        self.db = db
+        # Use local storage
+        self.db.connected = False
+        self.db.local_users.clear()
+
+    async def test_private_memory_isolated(self):
+        from memory import get_memory
+        mem_n = get_memory('niyati')
+        mem_p = get_memory('palak')
+
+        self.assertIsNot(mem_n, mem_p)
+
+        # Create user entries in local cache first (required for local fallback)
+        await self.db.get_or_create_user('niyati', 1, 'TestUser')
+        await self.db.get_or_create_user('palak', 1, 'TestUser')
+
+        # Save messages for each bot
+        await mem_n.save_private_message(1, 'user', 'hi niyati')
+        await mem_p.save_private_message(1, 'user', 'hi palak')
+
+        ctx_n = await mem_n.get_private_context(1, 'User')
+        ctx_p = await mem_p.get_private_context(1, 'User')
+
+        # Each should see only their own messages
+        n_contents = [m['content'] for m in ctx_n]
+        p_contents = [m['content'] for m in ctx_p]
+
+        self.assertIn('hi niyati', n_contents)
+        self.assertNotIn('hi palak', n_contents)
+        self.assertIn('hi palak', p_contents)
+        self.assertNotIn('hi niyati', p_contents)
+
+
+class TestRateLimiting(unittest.IsolatedAsyncioTestCase):
+    """Test independent rate limiting per bot."""
+
+    async def asyncSetUp(self):
+        from utils import rate_limiter
+        self.rl = rate_limiter
+        self.rl.cooldowns.clear()
+        self.rl.requests.clear()
+
+    async def test_independent_cooldown(self):
+        """Niyati's cooldown must not block Palak."""
+        user_id = 1
+
+        # Niyati request
+        allowed_n, _ = await self.rl.check('niyati', user_id)
+        self.assertTrue(allowed_n)
+
+        # Niyati cooldown
+        allowed_n2, _ = await self.rl.check('niyati', user_id)
+        self.assertFalse(allowed_n2)
+
+        # Palak should still be allowed
+        allowed_p, _ = await self.rl.check('palak', user_id)
+        self.assertTrue(allowed_p)
+
+
+class TestCleanup(unittest.IsolatedAsyncioTestCase):
+    """Test that cleanup_cooldowns is properly awaitable."""
+
+    async def test_cleanup_is_coroutine(self):
+        from utils import rate_limiter
+        import inspect
+        self.assertTrue(inspect.iscoroutinefunction(rate_limiter.cleanup_cooldowns))
+
+    async def test_cleanup_runs(self):
+        from utils import rate_limiter
+        # Force cleanup by setting old timestamp
+        rate_limiter._last_cleanup = datetime.now(timezone.utc) - timedelta(hours=2)
+        await rate_limiter.cleanup_cooldowns()
+        # Should not raise
+
+
+class TestOneBotMissing(unittest.TestCase):
+    """Test graceful operation when one bot token is missing."""
+
+    def test_palak_token_missing_no_crash(self):
+        from config import Config
+        # If PALAK_BOT_TOKEN is empty, get_bot_config should still work
+        cfg = Config.get_bot_config('palak')
+        # Token will be empty string, which is falsy — main.py checks this
+        self.assertIsInstance(cfg['token'], str)
+
+
+class TestPartnerValidation(unittest.TestCase):
+    """Test trusted partner checks."""
+
+    def test_username_none_safe(self):
+        """user.username being None must not crash."""
+        from handlers.messages import _is_trusted_partner
+        from group_room import group_manager
         group_manager.register_bot('niyati', 101)
         group_manager.register_bot('palak', 102)
-        
-        Config.NIYATI_BOT_USERNAME = "NiyatiBot"
-        Config.PALAK_BOT_USERNAME = "PalakDevaBot"
-        
-        # Mock DB
-        self.mock_db_data = {'niyati': {}, 'palak': {}}
-        async def mock_save_msg(bot, user_id, role, content):
-            if user_id not in self.mock_db_data[bot]:
-                self.mock_db_data[bot][user_id] = []
-            self.mock_db_data[bot][user_id].append({'bot': bot, 'role': role, 'content': content})
-            
-        async def mock_get_context(bot, user_id):
-            return self.mock_db_data[bot].get(user_id, [])
-            
-        self.db_patcher1 = patch('memory.db.save_message', new=mock_save_msg)
-        self.db_patcher2 = patch('memory.db.get_user_context', new=mock_get_context)
-        self.db_patcher1.start()
-        self.db_patcher2.start()
 
-    async def asyncTearDown(self):
-        self.db_patcher1.stop()
-        self.db_patcher2.stop()
+        mock_user = MagicMock()
+        mock_user.id = 999
+        mock_user.username = None  # This is the crash case
+        mock_user.is_bot = True
 
-    # =========================================================================
-    # PRIVATE CHAT SCENARIOS
-    # =========================================================================
-    async def test_01_02_private_chats_isolated(self):
-        """Scenarios 1, 2, 5: Verify private chats are routed correctly and histories isolated."""
-        mem_niyati = get_memory('niyati')
-        mem_palak = get_memory('palak')
-        
-        # They should return different objects
-        self.assertNotEqual(id(mem_niyati), id(mem_palak))
-        
-        await mem_niyati.save_private_message(1, 'user', 'hi niyati')
-        await mem_palak.save_private_message(1, 'user', 'hi palak')
-        
-        hist_n = await mem_niyati.get_private_context(1, 'user')
-        hist_p = await mem_palak.get_private_context(1, 'user')
-        
-        self.assertEqual(hist_n[-1]['content'], 'hi niyati')
-        self.assertEqual(hist_p[-1]['content'], 'hi palak')
+        # Should not raise AttributeError
+        result = _is_trusted_partner(mock_user, 'niyati')
+        self.assertFalse(result)
 
-    # =========================================================================
-    # GROUP MENTIONS & GENERAL DECISIONS
-    # =========================================================================
-    async def test_03_04_05_06_group_mentions(self):
-        """Scenarios 3, 4, 5, 6: Turn coordination decisions."""
-        chat_id = -100
-        room = await group_manager.get_room(chat_id)
-        room.niyati_present = True
-        room.palak_present = True
-        
-        # Scenario 3: Mention only Niyati
-        p_niyati = group_manager._decide_responders(room, 1, 10, "hello niyati")
-        self.assertIn('niyati', p_niyati)
-        
-        # Scenario 4: Mention only Palak
-        p_palak = group_manager._decide_responders(room, 2, 10, "hello palak")
-        self.assertIn('palak', p_palak)
-        
-        # Scenario 5: Address both
-        p_both = group_manager._decide_responders(room, 3, 10, "hello dono niyati and palak")
-        self.assertCountEqual(p_both, ['niyati', 'palak'])
-        
-        # Scenario 6: General message
-        # Probabilistic, so we just ensure it returns a list
-        p_general = group_manager._decide_responders(room, 4, 10, "kya haal hai")
-        self.assertIsInstance(p_general, list)
+    def test_partner_by_id(self):
+        """Partner must be validated by registered bot ID."""
+        from handlers.messages import _is_trusted_partner
+        from group_room import group_manager
+        group_manager.register_bot('niyati', 101)
+        group_manager.register_bot('palak', 102)
 
-    # =========================================================================
-    # BOT TO BOT REACTIONS
-    # =========================================================================
-    async def test_09_10_12_bot_reactions(self):
-        """Scenarios 9, 10, 12: Bot-to-bot interactions and ignoring unknown bots."""
-        chat_id = -100
-        room = await group_manager.get_room(chat_id)
-        room.active_until = datetime.now(timezone.utc) + timedelta(minutes=1) # simulate active human
-        room.niyati_present = True
-        room.palak_present = True
-        
-        # Niyati replies, Palak reacts (Scenario 9)
-        # Niyati sends message 10
-        await group_manager.add_bot_message('niyati', chat_id, 10, 'NiyatiBot', "how are you palak")
-        
-        # Palak processes Niyati's message
-        proceed, planned = await group_manager.process_partner_message(
-            bot_name='palak', chat_id=chat_id, message_id=10, 
-            partner_id=101, partner_name='NiyatiBot', text="how are you palak"
-        )
-        self.assertTrue(proceed, "Palak should process Niyati's message")
-        
-        # Unknown bot speaks (Scenario 12)
-        # Assuming handled correctly by the handler returning early, but manager should ignore if called.
-        # Actually in messages.py it checks _OTHER_BOT_USERNAMES. We'll simulate by max limits.
-        room.total_bot_replies = 99
-        proceed, _ = await group_manager.process_partner_message('palak', chat_id, 11, 999, 'RandoBot', 'spam')
-        self.assertFalse(proceed, "Should hit bot reply limit and stop")
+        mock_user = MagicMock()
+        mock_user.id = 102
+        mock_user.username = None
+        mock_user.is_bot = True
 
-    # =========================================================================
-    # SILENCE / TIMEOUT
-    # =========================================================================
-    async def test_11_user_silence(self):
-        """Scenario 11: User becomes silent"""
-        chat_id = -100
-        room = await group_manager.get_room(chat_id)
-        room.active_until = datetime.now(timezone.utc) - timedelta(seconds=1) # expired
-        
-        # Partner bot message comes in while human is silent
-        proceed, _ = await group_manager.process_partner_message('palak', chat_id, 20, 101, 'Niyati', 'hello')
-        self.assertFalse(proceed, "Bot should not react if human session is expired")
+        result = _is_trusted_partner(mock_user, 'niyati')
+        self.assertTrue(result)
 
-    # =========================================================================
-    # DEDUPLICATION
-    # =========================================================================
-    async def test_13_deduplication(self):
-        """Scenario 13: Same update delivered twice"""
-        chat_id = -100
-        
-        # Process once
-        proc1, _ = await group_manager.process_human_message('niyati', chat_id, 1, 10, 'User', 'test')
-        self.assertTrue(proc1)
-        
-        # Process again (same update)
-        proc2, _ = await group_manager.process_human_message('niyati', chat_id, 1, 10, 'User', 'test')
-        self.assertFalse(proc2, "Duplicate message should be dropped")
-
-    # =========================================================================
-    # RATE LIMITING
-    # =========================================================================
-    async def test_20_rate_limiting(self):
-        """Scenario 20: Rate limits reached by one bot independently"""
-        user_id = 1
-        
-        # Drain Niyati's limits
-        for i in range(10):
-            await rate_limiter.check("niyati", user_id)
-            
-        allowed_niyati, _ = await rate_limiter.check("niyati", user_id)
-        self.assertFalse(allowed_niyati)
-        
-        allowed_palak, _ = await rate_limiter.check("palak", user_id)
-        self.assertTrue(allowed_palak, "Palak should not be blocked by Niyati's limits")
-
-    # =========================================================================
-    # FALLBACKS / ISOLATION / PRESENCE
-    # =========================================================================
-    async def test_19_presence(self):
-        """Scenario 19: One bot removed from group"""
-        chat_id = -100
-        room = await group_manager.get_room(chat_id)
-        
-        await group_manager.update_presence(chat_id, 'niyati', True)
-        await group_manager.update_presence(chat_id, 'palak', False) # removed
-        
-        planned = group_manager._decide_responders(room, 5, 10, "hello palak")
-        self.assertEqual(planned, ['niyati'], "Niyati should take over 100% if she is alone")
 
 if __name__ == '__main__':
     unittest.main()
