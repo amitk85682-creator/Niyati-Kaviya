@@ -2,7 +2,7 @@
 ╔══════════════════════════════════════════════════════╗
 ║              AI ENGINE                                ║
 ║   Hybrid AI: OpenAI → Groq → Gemini (Auto-Failover)  ║
-║   Bot-Aware: Each bot uses its own character card     ║
+║   Bot-Aware: Each bot gets its own engine instance    ║
 ╚══════════════════════════════════════════════════════╝
 """
 
@@ -23,6 +23,7 @@ class AIEngine:
     """
     Hybrid AI engine with multi-provider failover.
     Bot-aware: uses character cards to build prompts.
+    Each bot should have its own instance to isolate key rotation state.
     """
 
     def __init__(self):
@@ -42,12 +43,12 @@ class AIEngine:
         self.current_index = 0
         self.client = None
         self._initialize_client()
-        logger.info(f"🤖 AI Engine: {len(self.groq_keys)} Groq, {len(self.gemini_keys)} Gemini, {len(self.openai_keys)} OpenAI keys")
+        logger.info(f"AI Engine: {len(self.groq_keys)} Groq, {len(self.gemini_keys)} Gemini, {len(self.openai_keys)} OpenAI keys")
 
     def _initialize_client(self):
         """Initialize Client based on Key Type"""
         if not self.all_keys:
-            logger.error("❌ No API Keys found!")
+            logger.error("No API Keys found!")
             return
 
         current = self.all_keys[self.current_index]
@@ -61,7 +62,7 @@ class AIEngine:
             )
 
         masked = current['key'][:8] + "..." + current['key'][-4:]
-        logger.info(f"🔑 Current AI: {current['type'].upper()} | Key: {masked}")
+        logger.info(f"Current AI: {current['type'].upper()} | Key: {masked}")
 
     def _rotate(self):
         """Switch to next key when one fails"""
@@ -86,7 +87,6 @@ class AIEngine:
                 if curr['type'] in ["openai", "groq"]:
                     model_name = "gpt-4o-mini" if curr['type'] == "openai" else Config.GROQ_MODEL
 
-                    # Build params - Groq/Llama doesn't handle presence_penalty well
                     params = {
                         "model": model_name,
                         "messages": messages,
@@ -101,10 +101,10 @@ class AIEngine:
 
                     if result:
                         result = result.strip()
-                        logger.debug(f"🤖 AI ({curr['type']}): {result[:80]}...")
+                        logger.debug(f"AI ({curr['type']}): {result[:80]}...")
                         return result
                     else:
-                        logger.warning(f"⚠️ Empty response from {curr['type']}")
+                        logger.warning(f"Empty response from {curr['type']}")
                         self._rotate()
                         continue
 
@@ -112,7 +112,6 @@ class AIEngine:
                 elif curr['type'] == "gemini":
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/{Config.GEMINI_MODEL}:generateContent?key={curr['key']}"
 
-                    # Convert messages to Gemini format
                     system_text = ""
                     contents = []
                     for m in messages:
@@ -126,7 +125,6 @@ class AIEngine:
                         "contents": contents,
                         "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temp}
                     }
-                    # Gemini supports systemInstruction
                     if system_text:
                         payload["systemInstruction"] = {"parts": [{"text": system_text}]}
 
@@ -135,18 +133,18 @@ class AIEngine:
                         if resp.status_code == 200:
                             data = resp.json()
                             result = data['candidates'][0]['content']['parts'][0]['text'].strip()
-                            logger.debug(f"🤖 AI (gemini): {result[:80]}...")
+                            logger.debug(f"AI (gemini): {result[:80]}...")
                             return result
                         else:
                             raise Exception(f"Gemini {resp.status_code}: {resp.text[:100]}")
 
             except Exception as e:
-                logger.warning(f"❌ {curr['type'].upper()} Failed (attempt {attempt_num+1}): {str(e)[:80]}. Rotating...")
+                logger.warning(f"{curr['type'].upper()} Failed (attempt {attempt_num+1}): {str(e)[:80]}. Rotating...")
                 await asyncio.sleep(0.5)
                 if not self._rotate():
                     break
 
-        logger.error("❌ ALL AI providers failed!")
+        logger.error("ALL AI providers failed!")
         return None
 
 
@@ -158,12 +156,6 @@ class AIEngine:
                                  reply_to_user: str = None) -> List[str]:
         """
         Generate AI response for a bot.
-        
-        This is the MAIN method that handles:
-        1. Loading the correct character
-        2. Building proper context with memory
-        3. Calling AI with the right prompt
-        4. Parsing response into multiple messages
         """
         # 1. Get character
         character = get_character(bot_name)
@@ -201,7 +193,6 @@ class AIEngine:
         # 6. Build messages for AI
         messages = [{"role": "system", "content": system_prompt}]
 
-        # Add conversation context (only for private, groups already have context in system prompt)
         if not is_group and context_msgs:
             for msg in context_msgs[-5:]:
                 messages.append({
@@ -209,7 +200,6 @@ class AIEngine:
                     "content": msg.get('content', '')
                 })
 
-        # Add current user message
         if is_group:
             messages.append({"role": "user", "content": f"[{user_name}]: {user_message}"})
         else:
@@ -219,7 +209,7 @@ class AIEngine:
         reply = await self._call_gpt(messages)
 
         if not reply:
-            return character.get('error_responses', ["network issue 🥺", "thodi der mein try karo?"])
+            return character.get('error_responses', ["network issue", "thodi der mein try karo?"])
 
         if reply.upper() == "IGNORE":
             return []
@@ -264,7 +254,19 @@ class AIEngine:
 
 
 # ============================================================================
-# SINGLETON INSTANCE
+# PER-BOT ENGINE REGISTRY
 # ============================================================================
 
-ai_engine = AIEngine()
+_engines: Dict[str, AIEngine] = {}
+
+
+def get_ai_engine(bot_name: str) -> AIEngine:
+    """
+    Get or create a persistent AIEngine instance for a specific bot.
+    Each bot gets its own engine with independent key rotation state.
+    """
+    bot_name = bot_name.lower()
+    if bot_name not in _engines:
+        _engines[bot_name] = AIEngine()
+        logger.info(f"AIEngine created for {bot_name}")
+    return _engines[bot_name]
