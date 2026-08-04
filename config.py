@@ -125,6 +125,8 @@ class Config:
 
         if not cls.PALAK_BOT_TOKEN:
             logger.warning("PALAK_BOT_TOKEN not set - Palak bot will not start")
+        elif cls.PALAK_BOT_TOKEN == cls.NIYATI_BOT_TOKEN:
+            errors.append("NIYATI_BOT_TOKEN and PALAK_BOT_TOKEN cannot be the same! You must create a second bot in BotFather for Palak.")
 
         if errors:
             raise ValueError(f"Config errors: {', '.join(errors)}")
