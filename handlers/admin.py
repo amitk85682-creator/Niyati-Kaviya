@@ -34,7 +34,7 @@ async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     bot_name = _get_bot_name(context)
-    uc = await db.get_user_count()
+    uc = await db.get_user_count(bot_name)
     gc = await db.get_group_count()
     dr_niyati = rate_limiter.get_daily_total("niyati")
     dr_palak = rate_limiter.get_daily_total("palak")
@@ -58,7 +58,8 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Only admins!")
         return
 
-    users = await db.get_all_users()
+    bot_name = _get_bot_name(context)
+    users = await db.get_all_users(bot_name)
     lines = []
     for u in users[:20]:
         n = u.get('first_name', '?')
@@ -91,7 +92,8 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     status = await update.message.reply_text("📢 Starting...")
-    users = await db.get_all_users()
+    bot_name = _get_bot_name(context)
+    users = await db.get_all_users(bot_name)
     ok, fail, total = 0, 0, len(users)
     ft = html.escape(msg_text) if msg_text else None
 
