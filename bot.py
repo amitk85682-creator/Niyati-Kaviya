@@ -22,7 +22,7 @@ from telegram.constants import ParseMode
 
 from config import Config, logger
 from database import db
-from ai_engine import ai_engine
+from ai_engine import get_ai_engine
 from health import health_server
 
 from handlers import (
@@ -56,8 +56,10 @@ from handlers import (
 
 async def send_daily_geeta(context):
     """Send daily Geeta quote to all groups"""
+    bot_name = context.bot_data.get('bot_name', 'niyati')
+    engine = get_ai_engine(bot_name)
     groups = await db.get_all_groups()
-    quote = await ai_engine.generate_geeta_quote()
+    quote = await engine.generate_geeta_quote()
 
     sent = 0
     for group in groups:
@@ -82,15 +84,15 @@ async def send_daily_geeta(context):
         except:
             pass
 
-    logger.info(f"📿 Daily Geeta sent to {sent} groups")
+    logger.info(f"Daily Geeta sent to {sent} groups ({bot_name})")
 
 
 async def cleanup_job(context):
     """Periodic cleanup"""
     from utils import rate_limiter
-    rate_limiter.cleanup_cooldowns()
+    await rate_limiter.cleanup_cooldowns()
     await db.cleanup_local_cache()
-    logger.info("🧹 Cleanup completed")
+    logger.info("Cleanup completed")
 
 
 # ============================================================================
@@ -99,7 +101,7 @@ async def cleanup_job(context):
 
 async def error_handler(update, context):
     """Handle errors"""
-    logger.error(f"❌ Error: {context.error}", exc_info=True)
+    logger.error(f"Error: {context.error}", exc_info=True)
     if update and update.effective_message:
         try:
             await update.effective_message.reply_text(
@@ -144,7 +146,7 @@ def setup_handlers(app: Application):
         handle_new_member, ChatMemberHandler.CHAT_MEMBER
     ))
     
-    # Phase 7: Bot presence detection
+    # Bot presence detection
     app.add_handler(ChatMemberHandler(
         handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER
     ))
@@ -163,7 +165,7 @@ def create_bot(bot_name: str, token: str, bot_username: str) -> Application:
     Create a fully configured bot Application.
 
     Args:
-        bot_name: 'niyati' or 'Palak'
+        bot_name: 'niyati' or 'palak' (always lowercase)
         token: Telegram bot token
         bot_username: Bot's @username
 
@@ -179,7 +181,7 @@ def create_bot(bot_name: str, token: str, bot_username: str) -> Application:
     # Register handlers
     setup_handlers(app)
 
-    logger.info(f"✅ Bot '{bot_name}' created with username @{bot_username}")
+    logger.info(f"Bot '{bot_name}' created with username @{bot_username}")
     return app
 
 
@@ -187,7 +189,7 @@ async def setup_jobs(app: Application, bot_name: str):
     """Setup scheduled jobs for a bot"""
     job_queue = app.job_queue
     if not job_queue:
-        logger.warning(f"⚠️ JobQueue not available for {bot_name}")
+        logger.warning(f"JobQueue not available for {bot_name}")
         return
 
     ist = pytz.timezone(Config.DEFAULT_TIMEZONE)
@@ -210,4 +212,4 @@ async def setup_jobs(app: Application, bot_name: str):
         name=f"cleanup_{bot_name}",
     )
 
-    logger.info(f"⏰ Jobs scheduled for {bot_name}")
+    logger.info(f"Jobs scheduled for {bot_name}")
