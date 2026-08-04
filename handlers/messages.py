@@ -2,13 +2,14 @@
 ╔══════════════════════════════════════════════════════╗
 ║           MAIN MESSAGE HANDLER                        ║
 ║   Private + Group with Smart Detection                ║
-║   🔴 FIXED: Cross-bot awareness, Shared memory,      ║
+║   Cross-bot awareness, Shared memory,                 ║
 ║   3 real people chatting feel                          ║
 ╚══════════════════════════════════════════════════════╝
 """
 
 import re
 import random
+from typing import Optional
 import asyncio
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,7 +18,7 @@ from telegram.constants import ParseMode, ChatAction
 
 from config import Config, logger
 from database import db
-from ai_engine import ai_engine
+from ai_engine import get_ai_engine
 from memory import get_memory
 from group_room import group_manager
 from utils import (
@@ -44,7 +45,7 @@ _MOOD_IMAGES = {
         'sleepy': ["https://i.pinimg.com/736x/a3/b4/c5/a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8.jpg"],
         'angry': [], 'love': []
     },
-    'Palak': {
+    'palak': {
         'happy': [
             "https://i.pinimg.com/736x/8c/3d/f1/8c3df1a2b4c5d6e7f8a9b0c1d2e3f4a5.jpg",
             "https://i.pinimg.com/736x/f2/a1/b3/f2a1b3c4d5e6f7a8b9c0d1e2f3a4b5c6.jpg",
@@ -59,7 +60,7 @@ _MOOD_IMAGES = {
 _CONTEXT_STICKERS = {
     'niyati': {'haha': [], 'lol': [], 'sad': [], 'love': [], 'angry': [],
                'hi': [], 'bye': [], 'thanks': [], 'sorry': [], 'miss': []},
-    'Palak':  {'haha': [], 'lol': [], 'sad': [], 'love': [], 'angry': [],
+    'palak':  {'haha': [], 'lol': [], 'sad': [], 'love': [], 'angry': [],
                'hi': [], 'bye': [], 'thanks': [], 'sorry': [], 'miss': []},
 }
 
@@ -99,19 +100,8 @@ def detect_mood_from_text(text):
 
 
 # ════════════════════════════════════════════════════════════════════
-# OTHER BOT NAMES (for cross-bot detection)
+# HELPERS
 # ════════════════════════════════════════════════════════════════════
-
-_OTHER_BOT_NAMES = {
-    'niyati': 'Palak',
-    'Palak': 'niyati',
-}
-
-_OTHER_BOT_USERNAMES = {
-    'niyati': Config.Palak_BOT_USERNAME.lower(),
-    'Palak': Config.NIYATI_BOT_USERNAME.lower(),
-}
-
 
 def _get_bot_name(context: ContextTypes.DEFAULT_TYPE) -> str:
     """Get bot_name from context.bot_data"""
@@ -123,25 +113,54 @@ def _get_bot_username(context: ContextTypes.DEFAULT_TYPE) -> str:
     return context.bot_data.get('bot_username', 'Niyati_personal_bot')
 
 
-def _is_other_bot_mentioned(msg_lower: str, bot_name: str) -> bool:
-    """Check if the OTHER bot is mentioned in the message"""
-    other_name = _OTHER_BOT_NAMES.get(bot_name, '')
-    other_username = _OTHER_BOT_USERNAMES.get(bot_name, '')
+def _resolve_reply_to_bot(message, bot_name: str) -> Optional[str]:
+    """
+    If the message is a reply-to a bot message, return the internal bot name
+    of the replied-to bot. Returns None if not a reply or replied to a human.
+    """
+    if not message.reply_to_message or not message.reply_to_message.from_user:
+        return None
+    replied_user = message.reply_to_message.from_user
+    if not replied_user.is_bot:
+        return None
     
-    if other_name and other_name.lower() in msg_lower:
-        return True
-    if other_username and f"@{other_username}" in msg_lower:
-        return True
-    return False
+    # Check by registered bot ID (primary)
+    for name in ['niyati', 'palak']:
+        registered_id = group_manager.get_bot_id(name)
+        if registered_id and registered_id == replied_user.id:
+            return name
+    
+    # Fallback: check by username
+    replied_username = (replied_user.username or '').lower()
+    if replied_username == Config.NIYATI_BOT_USERNAME.lower():
+        return 'niyati'
+    if replied_username == Config.PALAK_BOT_USERNAME.lower():
+        return 'palak'
+    
+    return None
 
 
-def _is_reply_to_other_bot(message, bot_id: int) -> bool:
-    """Check if message is a reply to the OTHER bot (not this one)"""
-    if message.reply_to_message and message.reply_to_message.from_user:
-        replied = message.reply_to_message.from_user
-        # Not this bot, but IS a bot
-        if replied.id != bot_id and replied.is_bot:
-            return True
+def _is_trusted_partner(user, bot_name: str) -> bool:
+    """
+    Check if the user is the trusted partner bot.
+    Uses registered bot ID as primary check, username as secondary.
+    Handles user.username being None safely.
+    """
+    partner_name = group_manager.get_partner_name(bot_name)
+    if not partner_name:
+        return False
+    
+    # Primary: check by registered Telegram user ID
+    partner_id = group_manager.get_bot_id(partner_name)
+    if partner_id and user.id == partner_id:
+        return True
+    
+    # Secondary: check by username (may not be set)
+    partner_username = Config.PALAK_BOT_USERNAME if partner_name == 'palak' else Config.NIYATI_BOT_USERNAME
+    user_username = (user.username or '').lower()
+    if partner_username and user_username == partner_username.lower():
+        return True
+    
     return False
 
 
@@ -149,7 +168,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handle all text messages.
     
-    🔴 MAJOR UPDATE: Cross-bot awareness
+    Cross-bot awareness:
     - Both Niyati and Palak participate in groups like 3 real people
     - Shared memory so they see each other's messages
     - Smart response logic: sometimes one responds, sometimes both
@@ -172,18 +191,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = _get_bot_username(context)
     bot_id = context.bot.id
     memory = get_memory(bot_name)
+    engine = get_ai_engine(bot_name)
 
     # ════════════════════════════════════════════════════════════════════
-    # 🔴 PHASE 7: PRESENCE CHECK
+    # PRESENCE CHECK
     # ════════════════════════════════════════════════════════════════════
     if is_group:
-        # We received a message, so this bot is definitely present
         await group_manager.update_presence(chat.id, bot_name, True)
         
-        # Lazy check partner presence if unknown
         room = await group_manager.get_room(chat.id)
         if room.is_partner_present(bot_name) is None:
-            partner_name = _OTHER_BOT_NAMES.get(bot_name)
+            partner_name = group_manager.get_partner_name(bot_name)
             if partner_name:
                 partner_id = group_manager.get_bot_id(partner_name)
                 if partner_id:
@@ -195,7 +213,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await group_manager.update_presence(chat.id, partner_name, is_present)
 
     # ════════════════════════════════════════════════════════════════════
-    # 🔴 BOT-TO-BOT SAFEGURADS
+    # BOT-TO-BOT SAFEGUARDS
     # ════════════════════════════════════════════════════════════════════
     if user.is_bot:
         if not is_group:
@@ -204,9 +222,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id == bot_id:
             return  # Ignore our own messages
 
-        partner_username = _OTHER_BOT_USERNAMES.get(bot_name, '').lower()
-        if not partner_username or user.username.lower() != partner_username:
-            logger.debug(f"🤖 Ignoring unknown bot: {user.username}")
+        if not _is_trusted_partner(user, bot_name):
+            logger.debug(f"Ignoring unknown bot: {(user.username or 'no-username')}")
             return
 
         # It's the partner bot!
@@ -221,18 +238,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not should_proceed:
             return
             
-        logger.info(f"🤖 [{bot_name}] Partner bot '{user.first_name}' spoke. Proceeding with plan: {planned}")
-        # Proceed with responding! (skip DB human tracking)
+        logger.info(f"[{bot_name}] Partner bot '{user.first_name}' spoke. Proceeding with plan: {planned}")
         reply_to_user_name = user.first_name
         chip_in_delay = 0
 
     else:
         # ════════════════════════════════════════════════════════════════════
-        # 🔴 SMART REPLY/MENTION DETECTION (Groups only)
+        # SMART REPLY/MENTION DETECTION (Groups only)
         # ════════════════════════════════════════════════════════════════════
         if is_group:
             if is_user_talking_to_others(message, bot_username, bot_id, bot_name):
-                logger.debug(f"👥 Skipping - User {user.id} is talking to other humans ({bot_name})")
+                logger.debug(f"Skipping - User {user.id} is talking to other humans ({bot_name})")
                 return
 
         # ════════════════════════════════════════════════════════════════════
@@ -257,7 +273,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pass
     
                 if missing_channels:
-                    logger.info(f"🚫 Blocking User {user.id} - Not joined {len(missing_channels)} channels")
+                    logger.info(f"Blocking User {user.id} - Not joined {len(missing_channels)} channels")
     
                     try:
                         await message.delete()
@@ -288,7 +304,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_group:
             spam_keywords = ['cp', 'child porn', 'videos price', 'job', 'profit', 'investment', 'crypto', 'bitcoin']
             if any(word in user_message.lower() for word in spam_keywords):
-                logger.info(f"🗑️ Spam detected from {user.id} ({bot_name})")
+                logger.info(f"Spam detected from {user.id} ({bot_name})")
                 return
 
         # ════════════════════════════════════════════════════════════════════
@@ -301,30 +317,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # ════════════════════════════════════════════════════════════════════
-        # 🔴 GROUP RESPONSE DECISION (Cross-Bot Aware)
+        # GROUP RESPONSE DECISION (Cross-Bot Aware)
         # ════════════════════════════════════════════════════════════════════
         reply_to_user_name = None
         chip_in_delay = 0
 
         if is_group:
-            # 🔴 NEW: Process through shared Group Room Manager
+            # Resolve reply-to bot for routing
+            reply_to_bot = _resolve_reply_to_bot(message, bot_name)
+            
             should_proceed, planned = await group_manager.process_human_message(
                 bot_name=bot_name,
                 chat_id=chat.id,
                 message_id=message.message_id,
                 sender_id=user.id,
                 sender_name=user.first_name,
-                text=user_message
+                text=user_message,
+                reply_to_bot_name=reply_to_bot
             )
             if not should_proceed:
-                return  # This bot already processed this message from another update instance
+                return
                 
             # Also save to DB for persistence
             db.add_group_message(chat.id, user.first_name, user.id, user_message)
 
-            # 🔴 COORDINATOR DECISION
+            # COORDINATOR DECISION
             if bot_name not in planned:
-                logger.debug(f"🛑 [{bot_name}] Not selected to respond to {user.first_name}")
+                logger.debug(f"[{bot_name}] Not selected to respond to {user.first_name}")
                 return
                 
             await db.get_or_create_group(bot_name, chat.id, chat.title)
@@ -340,7 +359,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # ════════════════════════════════════════════════════════════════════
-    # AI RESPONSE (Bot-Aware)
+    # AI RESPONSE (Bot-Aware, Per-Bot Engine)
     # ════════════════════════════════════════════════════════════════════
     try:
         try:
@@ -348,11 +367,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-        logger.info(f"💬 [{bot_name}] Processing: user={user.id} ({user.first_name}), "
+        logger.info(f"[{bot_name}] Processing: user={user.id} ({user.first_name}), "
                      f"msg='{user_message[:50]}...', {'group' if is_group else 'private'}")
 
-        # 🔴 FIX: generate_response now uses bot_name for character & memory
-        responses = await ai_engine.generate_response(
+        responses = await engine.generate_response(
             bot_name=bot_name,
             user_id=user.id,
             chat_id=chat.id,
@@ -362,12 +380,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_to_user=reply_to_user_name
         )
 
-        logger.info(f"📤 [{bot_name}] Got {len(responses)} responses for user {user.id}")
+        logger.info(f"[{bot_name}] Got {len(responses)} responses for user {user.id}")
 
         # Random Bonus (Private only)
         if is_private and random.random() < 0.1:
             prefs = await db.get_user_preferences(bot_name, user.id)
-            bonus = await ai_engine.get_random_bonus()
+            bonus = await engine.get_random_bonus()
 
             if bonus:
                 is_shayari = "shayari" in str(bonus).lower() or "\n" in str(bonus)
@@ -386,16 +404,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 responses,
                 reply_to=message.message_id if is_group else None,
             )
-            logger.info(f"✅ [{bot_name}] Sent {len(responses)} msgs to {user.id}")
+            logger.info(f"[{bot_name}] Sent {len(responses)} msgs to {user.id}")
 
-            # 🔴 SAVE BOT'S RESPONSE TO SHARED GROUP MEMORY
-            # So the other bot can see what this bot said
+            # SAVE BOT'S RESPONSE TO SHARED GROUP MEMORY
             if is_group and sent_msg_ids:
                 combined_response = ' '.join(responses)
-                bot_display_name = bot_name.capitalize()
-                # Use the first sent message ID
-                await group_manager.add_bot_message(bot_name, chat.id, sent_msg_ids[0], bot_display_name, combined_response)
-                logger.info(f"💾 [{bot_name}] Saved response to shared group memory")
+                display_name = 'Niyati' if bot_name == 'niyati' else 'Palak Deva'
+                await group_manager.add_bot_message(bot_name, chat.id, sent_msg_ids[0], display_name, combined_response)
+                logger.info(f"[{bot_name}] Saved response to shared group memory")
 
             # ── MOOD IMAGE (very rare, private only) ──
             if is_private and should_send_image():
@@ -406,7 +422,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_photo(
                             chat_id=chat.id, photo=img_url,
                         )
-                        logger.info(f"🖼️ [{bot_name}] Sent mood image ({detected_mood}) to {user.id}")
                     except Exception as e:
                         logger.debug(f"Image send failed: {e}")
 
@@ -418,15 +433,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_sticker(
                             chat_id=chat.id, sticker=sticker_id,
                         )
-                        logger.info(f"🎭 [{bot_name}] Sent sticker to {user.id}")
                     except Exception as e:
                         logger.debug(f"Sticker send failed: {e}")
 
         else:
-            logger.warning(f"⚠️ [{bot_name}] No responses generated for user {user.id}")
+            logger.warning(f"[{bot_name}] No responses generated for user {user.id}")
 
     except Exception as e:
-        logger.error(f"❌ Message handling error ({bot_name}): {e}", exc_info=True)
+        logger.error(f"Message handling error ({bot_name}): {e}", exc_info=True)
         try:
             await message.reply_text("oops kuch gadbad... retry karo? 🫶")
         except:
