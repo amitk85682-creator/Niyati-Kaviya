@@ -1,13 +1,16 @@
 """
 ╔══════════════════════════════════════════════════════╗
 ║            CENTRAL CONFIGURATION                      ║
-║     Shared config for Niyati & Kavya Bots             ║
+║     Shared config for Niyati & Palak Bots             ║
 ╚══════════════════════════════════════════════════════╝
 """
 
 import os
 import sys
 import logging
+
+from dotenv import load_dotenv
+load_dotenv()
 
 # ============================================================================
 # LOGGING SETUP
@@ -34,12 +37,11 @@ class Config:
     """Central configuration for both bots"""
 
     # ── Bot Tokens ──
-    # Supports both NIYATI_BOT_TOKEN and TELEGRAM_BOT_TOKEN env vars
     NIYATI_BOT_TOKEN = os.getenv('NIYATI_BOT_TOKEN', '') or os.getenv('TELEGRAM_BOT_TOKEN', '')
-    NIYATI_BOT_USERNAME = os.getenv('BOT_USERNAME', 'Niyati_personal_bot')
+    NIYATI_BOT_USERNAME = os.getenv('NIYATI_BOT_USERNAME', '') or os.getenv('BOT_USERNAME', 'Niyati_personal_bot')
 
     PALAK_BOT_TOKEN = os.getenv('PALAK_BOT_TOKEN') or os.getenv('KAVYA_BOT_TOKEN', '')
-    PALAK_BOT_USERNAME = os.getenv('PALAK_BOT_USERNAME') or os.getenv('KAVYA_BOT_USERNAME', 'Palak_bot')
+    PALAK_BOT_USERNAME = os.getenv('PALAK_BOT_USERNAME') or os.getenv('KAVYA_BOT_USERNAME', 'palakdevabot')
 
     # ── AI API Keys ──
     # OpenAI
@@ -83,7 +85,6 @@ class Config:
     DEFAULT_TIMEZONE = os.getenv('DEFAULT_TIMEZONE', 'Asia/Kolkata')
 
     # ── Server ──
-    # Render sets PORT env var - app MUST bind to it for health checks
     PORT = int(os.getenv('PORT', '10000'))
 
     # ── Features ──
@@ -114,16 +115,16 @@ class Config:
         """Validate critical configuration"""
         errors = []
         if not cls.NIYATI_BOT_TOKEN:
-            errors.append("TELEGRAM_BOT_TOKEN (Niyati) required")
+            errors.append("NIYATI_BOT_TOKEN (or TELEGRAM_BOT_TOKEN) required")
 
         if not cls.API_KEYS_LIST and not cls.GROQ_API_KEYS_LIST and not cls.GEMINI_API_KEYS_LIST:
             errors.append("At least one API key (OpenAI/Groq/Gemini) required")
 
         if not cls.SUPABASE_URL or not cls.SUPABASE_KEY:
-            logger.warning("⚠️ Supabase not configured - using local storage only")
+            logger.warning("Supabase not configured - using local storage only")
 
         if not cls.PALAK_BOT_TOKEN:
-            logger.warning("⚠️ PALAK_BOT_TOKEN not set - Palak bot will not start")
+            logger.warning("PALAK_BOT_TOKEN not set - Palak bot will not start")
 
         if errors:
             raise ValueError(f"Config errors: {', '.join(errors)}")
