@@ -355,6 +355,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Wait for our turn if we are second
             await group_manager.wait_for_turn(bot_name, chat.id, planned, trigger_message_id)
             
+            # Reserve before generating AI response
+            reserved = await group_manager.reserve_bot(bot_name, chat.id, trigger_message_id)
+            if not reserved:
+                logger.debug(f"[{bot_name}] Could not reserve for trigger {trigger_message_id}, likely already inflight")
+                return
+            
             reply_to_user_name = None
 
         if is_private:
@@ -412,9 +418,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # SAVE BOT'S RESPONSE TO SHARED GROUP MEMORY
             if is_group and sent_msg_ids:
-                combined_response = ' '.join(responses)
                 display_name = 'Niyati' if bot_name == 'niyati' else 'Palak Deva'
-                await group_manager.add_bot_message(bot_name, chat.id, sent_msg_ids[0], display_name, combined_response, trigger_message_id)
+                for idx, msg_id in enumerate(sent_msg_ids):
+                    chunk_text = responses[idx]
+                    await group_manager.add_bot_message(
+                        bot_name=bot_name, 
+                        bot_id=context.bot.id, 
+                        chat_id=chat.id, 
+                        message_id=msg_id, 
+                        bot_display_name=display_name, 
+                        text=chunk_text, 
+                        trigger_message_id=trigger_message_id
+                    )
                 logger.info(f"[{bot_name}] Saved response to shared group memory")
 
             # ── MOOD IMAGE (very rare, private only) ──
@@ -445,6 +460,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Message handling error ({bot_name}): {e}", exc_info=True)
+        if is_group and 'trigger_message_id' in locals():
+            await group_manager.release_bot(bot_name, chat.id, trigger_message_id)
         try:
             await message.reply_text("oops kuch gadbad... retry karo? 🫶")
         except:

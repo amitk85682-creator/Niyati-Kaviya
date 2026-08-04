@@ -74,7 +74,14 @@ For **both** bots, talk to `@BotFather` on Telegram and configure:
 **Without Supabase**: Data is stored in process memory using Python dicts. All data is **lost on restart**. There is no SQLite fallback.
 
 ### Migration Note (bot_name isolation)
-The `users` table stores messages as a JSON array. Each message object contains a `bot` field identifying which bot wrote it. The application filters by this field at read time to keep Niyati's and Palak's private histories isolated. No schema migration is needed for this filtering, but adding a `bot_name` column to the `users` table would allow more efficient queries in the future.
+A database migration is **mandatory** to upgrade the schema for dual-bot isolation. This will safely add the `bot_name` column, preserve data, and enforce `(bot_name, user_id)` uniqueness.
+
+**Supabase SQL Editor Steps:**
+1. Open the Supabase dashboard for your project.
+2. Navigate to the **SQL Editor** tab.
+3. Open the file `migrations/001_add_bot_name_to_users.sql` from this repository.
+4. Copy the entire contents of the file and paste it into the SQL Editor.
+5. Click **Run** to execute the migration.
 
 ## Bot-to-Bot Communication
 

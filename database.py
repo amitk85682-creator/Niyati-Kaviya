@@ -121,11 +121,14 @@ class SupabaseClient:
                 result = response.json()
                 return result[0] if isinstance(result, list) and result else data
             elif response.status_code == 409:
-                return data
+                logger.warning(f"Supabase INSERT conflict (409): {response.text}")
+                raise ValueError("409 Conflict")
             else:
                 logger.error(f"Supabase INSERT error {response.status_code}: {response.text}")
                 return None
 
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"Supabase INSERT exception: {e}")
             return None
@@ -365,7 +368,7 @@ class Database:
 
         return []
 
-    async def save_message(self, bot_name: str, user_id: int, role: str, content: str):
+    async def save_message(self, bot_name: str, user_id: int, role: str, content: str) -> bool:
         """Save message to user history (bot-aware)"""
         new_msg = {
             'role': role,
@@ -376,42 +379,81 @@ class Database:
 
         if self.connected and self.client:
             try:
-                users_list = await self.client.select('users', 'messages,total_messages', {'bot_name': bot_name, 'user_id': user_id})
+                for attempt in range(2):
+                    users_list = await self.client.select('users', 'messages,total_messages', {'bot_name': bot_name, 'user_id': user_id})
 
-                if users_list and len(users_list) > 0:
-                    user_data = users_list[0]
-                    messages = user_data.get('messages', '[]')
-                    if isinstance(messages, str):
-                        try:
-                            messages = json.loads(messages)
-                        except:
+                    if users_list and len(users_list) > 0:
+                        user_data = users_list[0]
+                        messages = user_data.get('messages', '[]')
+                        if isinstance(messages, str):
+                            try:
+                                messages = json.loads(messages)
+                            except:
+                                messages = []
+                        if not isinstance(messages, list):
                             messages = []
-                    if not isinstance(messages, list):
-                        messages = []
 
-                    messages.append(new_msg)
-                    messages = messages[-Config.MAX_PRIVATE_MESSAGES:]
-                    total = user_data.get('total_messages', 0) + 1
+                        messages.append(new_msg)
+                        messages = messages[-Config.MAX_PRIVATE_MESSAGES:]
+                        total = user_data.get('total_messages', 0) + 1
 
-                    await self.client.update('users', {
-                        'messages': json.dumps(messages),
-                        'total_messages': total,
-                        'updated_at': datetime.now(timezone.utc).isoformat()
-                    }, {'bot_name': bot_name, 'user_id': user_id})
-                return
+                        update_result = await self.client.update('users', {
+                            'messages': json.dumps(messages),
+                            'total_messages': total,
+                            'updated_at': datetime.now(timezone.utc).isoformat()
+                        }, {'bot_name': bot_name, 'user_id': user_id})
+                        
+                        if update_result is not None:
+                            return True
+                        else:
+                            logger.error(f"Save message update failed for {bot_name}:{user_id}. Using fallback.")
+                            break
+
+                    # User row missing, try to create it
+                    try:
+                        new_user_data = {
+                            'bot_name': bot_name,
+                            'user_id': user_id,
+                            'messages': json.dumps([new_msg]),
+                            'total_messages': 1,
+                            'created_at': datetime.now(timezone.utc).isoformat(),
+                            'updated_at': datetime.now(timezone.utc).isoformat()
+                        }
+                        insert_result = await self.client.insert('users', new_user_data)
+                        if insert_result is not None:
+                            return True
+                        else:
+                            logger.error(f"Save message insert failed for {bot_name}:{user_id}. Using fallback.")
+                            break
+                    except ValueError:
+                        # 409 Conflict
+                        if attempt == 0:
+                            await asyncio.sleep(0.5)
+                            continue
+                        logger.warning(f"Supabase save_message conflict (409) persists for {bot_name}:{user_id}. Using fallback.")
+                        break
+
             except Exception as e:
-                logger.debug(f"Save message error: {e}")
+                logger.error(f"Save message error: {e}. Using fallback.")
 
         # Local fallback
         key = self._user_key(bot_name, user_id)
-        if key in self.local_users:
-            if 'messages' not in self.local_users[key]:
-                self.local_users[key]['messages'] = []
-            self.local_users[key]['messages'].append(new_msg)
-            self.local_users[key]['messages'] = \
-                self.local_users[key]['messages'][-Config.MAX_PRIVATE_MESSAGES:]
-            self.local_users[key]['total_messages'] = \
-                self.local_users[key].get('total_messages', 0) + 1
+        if key not in self.local_users:
+            self.local_users[key] = {
+                'user_id': user_id,
+                'bot_name': bot_name,
+                'messages': [],
+                'total_messages': 0,
+                'preferences': {}
+            }
+            
+        if 'messages' not in self.local_users[key]:
+            self.local_users[key]['messages'] = []
+            
+        self.local_users[key]['messages'].append(new_msg)
+        self.local_users[key]['messages'] = self.local_users[key]['messages'][-Config.MAX_PRIVATE_MESSAGES:]
+        self.local_users[key]['total_messages'] = self.local_users[key].get('total_messages', 0) + 1
+        return True
 
     async def clear_user_memory(self, bot_name: str, user_id: int):
         """Clear user conversation memory"""

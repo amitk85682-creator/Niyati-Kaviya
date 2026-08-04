@@ -235,7 +235,7 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         trigger = room.get_trigger(trigger_id)
         self.assertEqual(trigger.total_bot_replies, 0)
         
-        await self.gm.add_bot_message('niyati', chat_id, 51, 'Niyati', 'hi there', trigger_id)
+        await self.gm.add_bot_message('niyati', 9999, chat_id, 51, 'Niyati', 'hi there', trigger_id)
         self.assertEqual(trigger.total_bot_replies, 1)
 
     async def test_no_session_from_bot_message(self):
@@ -245,7 +245,7 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(room.has_active_human_session())
 
         # Give it a fake trigger ID, it shouldn't open session
-        await self.gm.add_bot_message('niyati', chat_id, 60, 'Niyati', 'hello', 99)
+        await self.gm.add_bot_message('niyati', 9999, chat_id, 60, 'Niyati', 'hello', 99)
         self.assertFalse(room.has_active_human_session())
 
     async def test_both_selected_bots_respond_exactly_once(self):
@@ -261,7 +261,7 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
                 'niyati', chat_id, 70, 10, 'User', 'hello')
             
             # Niyati adds her message
-            await self.gm.add_bot_message('niyati', chat_id, 71, 'Niyati', 'Niyati response', trigger_id)
+            await self.gm.add_bot_message('niyati', 101, chat_id, 71, 'Niyati', 'Niyati response', trigger_id)
             
             # Palak sees Niyati's message.
             proceed, _ = await self.gm.process_partner_message(
@@ -429,3 +429,56 @@ class TestPartnerValidation(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class TestPhase11(unittest.IsolatedAsyncioTestCase):
+    async def test_database_409_retry_and_fallback(self):
+        from database import Database
+        db = Database()
+        db.connected = True
+        db.client = AsyncMock()
+        db.client.select.return_value = []  # User missing
+        db.client.insert.side_effect = ValueError("409 Conflict")
+        
+        res = await db.save_message('niyati', 999, 'user', 'hi')
+        self.assertTrue(res)
+        
+        key = db._user_key('niyati', 999)
+        self.assertIn(key, db.local_users)
+        self.assertEqual(db.local_users[key]['messages'][0]['content'], 'hi')
+        self.assertEqual(db.client.insert.call_count, 2)
+        
+    async def test_database_missing_row_creation(self):
+        from database import Database
+        db = Database()
+        db.connected = True
+        db.client = AsyncMock()
+        db.client.select.return_value = []  # User missing
+        db.client.insert.return_value = {'bot_name': 'niyati', 'user_id': 999}
+        
+        res = await db.save_message('niyati', 999, 'user', 'hi')
+        self.assertTrue(res)
+        self.assertEqual(db.client.insert.call_count, 1)
+
+    async def test_group_room_dedupe_and_reservation(self):
+        from group_room import group_manager, TriggerState
+        room = await group_manager.get_room(123)
+        room.triggers[100] = TriggerState()
+        
+        # Test Reservation
+        res1 = await group_manager.reserve_bot('niyati', 123, 100)
+        self.assertTrue(res1)
+        res2 = await group_manager.reserve_bot('niyati', 123, 100)
+        self.assertFalse(res2)
+        
+        # Test exact-once transcript
+        room.active_until = datetime.now(timezone.utc) + timedelta(minutes=1)
+        await group_manager.add_bot_message('niyati', 1234, 123, 100, 'Niyati', 'hi', 100)
+        await group_manager.add_bot_message('niyati', 1234, 123, 100, 'Niyati', 'hi', 100)
+        self.assertEqual(len(room.transcript), 1)
+        self.assertEqual(room.transcript[0]['sender_id'], 1234)
+
+    def test_readme_contains_migration(self):
+        with open('README.md', 'r', encoding='utf-8') as f:
+            content = f.read()
+        self.assertIn('migrations/001_add_bot_name_to_users.sql', content)
+        self.assertNotIn('No schema migration is needed', content)

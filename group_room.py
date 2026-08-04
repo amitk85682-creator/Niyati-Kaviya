@@ -19,6 +19,7 @@ from config import Config, logger
 class TriggerState:
     planned_responders: List[str] = field(default_factory=list)
     responded_bots: Set[str] = field(default_factory=set)
+    inflight_bots: Set[str] = field(default_factory=set)
     last_responder: Optional[str] = None
     total_bot_replies: int = 0
     consecutive_bot_replies: int = 0
@@ -44,7 +45,7 @@ class GroupRoomState:
         
         # Deduplication state
         self.processed_by_bot: Set[Tuple[str, int]] = set()  # (bot_name, message_id)
-        self.transcript_keys: Set[Tuple[int, int]] = set()   # (message_id, sender_id)
+        self.transcript_keys: Set[int] = set()   # message_id
         
         # Shared memory
         self.transcript: deque = deque(maxlen=Config.MAX_GROUP_MESSAGES if hasattr(Config, 'MAX_GROUP_MESSAGES') else 50)
@@ -146,7 +147,7 @@ class GroupRoomManager:
             logger.info(f"[Coordinator] Message {message_id} -> {plan}")
             
             # 4. Transcript Dedupe
-            transcript_key = (message_id, sender_id)
+            transcript_key = message_id
             if transcript_key not in room.transcript_keys:
                 room.transcript_keys.add(transcript_key)
                 room.transcript.append({
@@ -171,7 +172,27 @@ class GroupRoomManager:
                 
             return True, plan, message_id
 
-    async def add_bot_message(self, bot_name: str, chat_id: int, message_id: int, 
+    async def reserve_bot(self, bot_name: str, chat_id: int, trigger_message_id: int) -> bool:
+        """Atomically reserve a bot before starting an AI path."""
+        room = await self.get_room(chat_id)
+        async with room.lock:
+            trigger = room.get_trigger(trigger_message_id)
+            if not trigger:
+                return False
+            if bot_name in trigger.responded_bots or bot_name in trigger.inflight_bots:
+                return False
+            trigger.inflight_bots.add(bot_name)
+            return True
+
+    async def release_bot(self, bot_name: str, chat_id: int, trigger_message_id: int):
+        """Release the reservation on failure."""
+        room = await self.get_room(chat_id)
+        async with room.lock:
+            trigger = room.get_trigger(trigger_message_id)
+            if trigger and bot_name in trigger.inflight_bots:
+                trigger.inflight_bots.remove(bot_name)
+
+    async def add_bot_message(self, bot_name: str, bot_id: int, chat_id: int, message_id: int, 
                               bot_display_name: str, text: str, trigger_message_id: int):
         """
         Add a bot's response to the transcript and count it.
@@ -183,13 +204,13 @@ class GroupRoomManager:
             if not room.has_active_human_session():
                 return
                 
-            transcript_key = (message_id, 0)
+            transcript_key = message_id
             if transcript_key not in room.transcript_keys:
                 room.transcript_keys.add(transcript_key)
                 room.transcript.append({
                     'message_id': message_id,
                     'sender_name': bot_display_name,
-                    'sender_id': 0,
+                    'sender_id': bot_id,
                     'content': text,
                     'is_bot': True,
                     'bot_name': bot_name,
@@ -199,9 +220,15 @@ class GroupRoomManager:
             # Update trigger state
             trigger = room.get_trigger(trigger_message_id)
             if trigger:
-                trigger.total_bot_replies += 1
-                trigger.last_responder = bot_name
-                trigger.responded_bots.add(bot_name)
+                if bot_name in trigger.inflight_bots:
+                    trigger.inflight_bots.remove(bot_name)
+                    trigger.total_bot_replies += 1
+                    trigger.last_responder = bot_name
+                    trigger.responded_bots.add(bot_name)
+                elif bot_name not in trigger.responded_bots:
+                    trigger.total_bot_replies += 1
+                    trigger.last_responder = bot_name
+                    trigger.responded_bots.add(bot_name)
 
     async def process_partner_message(self, bot_name: str, chat_id: int, message_id: int, 
                                       partner_id: int, partner_name: str, text: str,
@@ -219,7 +246,7 @@ class GroupRoomManager:
             room.processed_by_bot.add(bot_msg_key)
             
             # 2. Add to transcript with real partner_id
-            transcript_key = (message_id, partner_id)
+            transcript_key = message_id
             if transcript_key not in room.transcript_keys:
                 room.transcript_keys.add(transcript_key)
                 partner_bot_name = self.get_partner_name(bot_name)
