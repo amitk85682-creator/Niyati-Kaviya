@@ -122,14 +122,14 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         room.niyati_present = True
         room.palak_present = True
 
-        _, plan1 = await self.gm.process_human_message(
+        _, plan1, _ = await self.gm.process_human_message(
             'niyati', chat_id, 1, 10, 'User', 'hello')
-        _, plan2 = await self.gm.process_human_message(
+        _, plan2, _ = await self.gm.process_human_message(
             'niyati', chat_id, 2, 10, 'User', 'hello again')
 
         # Plans are keyed by message_id — they should exist independently
-        self.assertIsNotNone(room.get_plan(1))
-        self.assertIsNotNone(room.get_plan(2))
+        self.assertIsNotNone(room.get_trigger(1))
+        self.assertIsNotNone(room.get_trigger(2))
 
     async def test_same_plan_for_both_bots(self):
         """Both bots seeing the same message_id must get the same plan."""
@@ -138,9 +138,9 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         room.niyati_present = True
         room.palak_present = True
 
-        _, plan_n = await self.gm.process_human_message(
+        _, plan_n, _ = await self.gm.process_human_message(
             'niyati', chat_id, 5, 10, 'User', 'test')
-        _, plan_p = await self.gm.process_human_message(
+        _, plan_p, _ = await self.gm.process_human_message(
             'palak', chat_id, 5, 10, 'User', 'test')
 
         self.assertEqual(plan_n, plan_p)
@@ -152,9 +152,9 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         room.niyati_present = True
         room.palak_present = True
 
-        proceed1, _ = await self.gm.process_human_message(
+        proceed1, _, _ = await self.gm.process_human_message(
             'niyati', chat_id, 10, 10, 'User', 'test')
-        proceed2, _ = await self.gm.process_human_message(
+        proceed2, _, _ = await self.gm.process_human_message(
             'niyati', chat_id, 10, 10, 'User', 'test')
 
         self.assertTrue(proceed1)
@@ -162,13 +162,12 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
 
     async def test_reply_to_niyati_routes_to_niyati(self):
         """Reply-to Niyati's message must include niyati in plan."""
-        from config import Config
         chat_id = -100
         room = await self.gm.get_room(chat_id)
         room.niyati_present = True
         room.palak_present = True
 
-        _, plan = await self.gm.process_human_message(
+        _, plan, _ = await self.gm.process_human_message(
             'niyati', chat_id, 20, 10, 'User', 'what do you think?',
             reply_to_bot_name='niyati')
 
@@ -181,7 +180,7 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         room.niyati_present = True
         room.palak_present = True
 
-        _, plan = await self.gm.process_human_message(
+        _, plan, _ = await self.gm.process_human_message(
             'palak', chat_id, 21, 10, 'User', 'tell me more',
             reply_to_bot_name='palak')
 
@@ -194,66 +193,86 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         room.niyati_present = True
         room.palak_present = False
 
-        _, plan = await self.gm.process_human_message(
+        _, plan, _ = await self.gm.process_human_message(
             'niyati', chat_id, 30, 10, 'User', 'hello palak')
 
         self.assertEqual(plan, ['niyati'])
 
     async def test_bot_loop_prevention(self):
         """Bot-to-bot replies must stop at configured limits."""
-        from config import Config
         chat_id = -100
         room = await self.gm.get_room(chat_id)
         room.niyati_present = True
         room.palak_present = True
 
         # Trigger a human message first to open session
-        await self.gm.process_human_message(
+        _, _, trigger_id = await self.gm.process_human_message(
             'niyati', chat_id, 40, 10, 'User', 'start')
 
         # First bot-to-bot exchange
         proceed1, _ = await self.gm.process_partner_message(
-            'palak', chat_id, 41, 101, 'Niyati', 'response')
+            'palak', chat_id, 41, 101, 'Niyati', 'response', trigger_id)
 
         # Consecutive limit should kick in
         proceed2, _ = await self.gm.process_partner_message(
-            'niyati', chat_id, 42, 102, 'Palak', 'another response')
+            'niyati', chat_id, 42, 102, 'Palak', 'another response', trigger_id)
 
         # At least one should be blocked by MAX_CONSECUTIVE_BOT_TO_BOT_REPLIES=1
-        # The exact behavior depends on plan, but consecutive limit blocks the 2nd
         if proceed1:
-            # If first went through, consecutive_bot_replies is now 1
-            # Second should be blocked since MAX_CONSECUTIVE is 1
             self.assertFalse(proceed2)
 
     async def test_bot_message_counts_toward_limit(self):
-        """add_bot_message must increment the reply counter."""
+        """add_bot_message must increment the reply counter in TriggerState."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
         room.niyati_present = True
         room.palak_present = True
 
         # Open session
-        await self.gm.process_human_message(
+        _, _, trigger_id = await self.gm.process_human_message(
             'niyati', chat_id, 50, 10, 'User', 'hello')
 
-        before = room.get_bot_replies_for_trigger()
-        await self.gm.add_bot_message('niyati', chat_id, 51, 'Niyati', 'hi there')
-        after = room.get_bot_replies_for_trigger()
-
-        self.assertEqual(after, before + 1)
+        trigger = room.get_trigger(trigger_id)
+        self.assertEqual(trigger.total_bot_replies, 0)
+        
+        await self.gm.add_bot_message('niyati', chat_id, 51, 'Niyati', 'hi there', trigger_id)
+        self.assertEqual(trigger.total_bot_replies, 1)
 
     async def test_no_session_from_bot_message(self):
         """A bot message must NOT open or refresh a human session."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
-        # No human session active
         self.assertFalse(room.has_active_human_session())
 
-        await self.gm.add_bot_message('niyati', chat_id, 60, 'Niyati', 'hello')
-
-        # Session should still be inactive
+        # Give it a fake trigger ID, it shouldn't open session
+        await self.gm.add_bot_message('niyati', chat_id, 60, 'Niyati', 'hello', 99)
         self.assertFalse(room.has_active_human_session())
+
+    async def test_both_selected_bots_respond_exactly_once(self):
+        """If plan is [Niyati, Palak], Palak seeing Niyati's message must NOT trigger a second AI delay path."""
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+
+        # Mock decide_responders to return both
+        with patch.object(self.gm, '_decide_responders', return_value=['niyati', 'palak']):
+            _, plan, trigger_id = await self.gm.process_human_message(
+                'niyati', chat_id, 70, 10, 'User', 'hello')
+            
+            # Niyati adds her message
+            await self.gm.add_bot_message('niyati', chat_id, 71, 'Niyati', 'Niyati response', trigger_id)
+            
+            # Palak sees Niyati's message.
+            proceed, _ = await self.gm.process_partner_message(
+                'palak', chat_id, 71, 101, 'Niyati', 'Niyati response', trigger_id)
+            
+            # proceed MUST be False to prevent double AI generation
+            self.assertFalse(proceed)
+            
+            # But the transcript should have Niyati's message with real partner_id
+            transcript = await self.gm.get_transcript(chat_id)
+            self.assertEqual(transcript[-1]['sender_id'], 101)
 
 
 class TestMemoryIsolation(unittest.IsolatedAsyncioTestCase):
@@ -292,6 +311,32 @@ class TestMemoryIsolation(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('hi palak', n_contents)
         self.assertIn('hi palak', p_contents)
         self.assertNotIn('hi niyati', p_contents)
+
+
+class TestSupabaseIsolation(unittest.IsolatedAsyncioTestCase):
+    """Test that database methods pass bot_name for Supabase isolation."""
+
+    async def asyncSetUp(self):
+        from database import db, SupabaseClient
+        self.db = db
+        self.db.connected = True
+        self.db.client = AsyncMock(spec=SupabaseClient)
+        self.db.client.rest_url = "http://mock"
+        
+        # Setup mock return values to prevent NoneType errors on len()
+        self.db.client.select.return_value = []
+        self.db.client.insert.return_value = {'bot_name': 'mock', 'user_id': 1}
+        self.db.client.update.return_value = {'bot_name': 'mock', 'user_id': 1}
+
+    async def test_supabase_bot_name_queries(self):
+        await self.db.get_or_create_user('niyati', 99, 'Test')
+        self.db.client.select.assert_called_with('users', '*', {'bot_name': 'niyati', 'user_id': 99})
+
+        await self.db.save_message('palak', 99, 'user', 'hello')
+        self.db.client.select.assert_called_with('users', 'messages,total_messages', {'bot_name': 'palak', 'user_id': 99})
+
+        await self.db.clear_user_memory('niyati', 99)
+        self.db.client.update.assert_called_with('users', unittest.mock.ANY, {'bot_name': 'niyati', 'user_id': 99})
 
 
 class TestRateLimiting(unittest.IsolatedAsyncioTestCase):
