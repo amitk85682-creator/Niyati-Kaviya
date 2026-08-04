@@ -354,6 +354,8 @@ class Database:
                             messages = []
                     if not isinstance(messages, list):
                         messages = []
+                    # Filter to only this bot's messages for isolation
+                    messages = [m for m in messages if not m.get('bot') or m['bot'] == bot_name]
                     return messages[-Config.MAX_PRIVATE_MESSAGES:]
             except Exception as e:
                 logger.debug(f"Get context error: {e}")
