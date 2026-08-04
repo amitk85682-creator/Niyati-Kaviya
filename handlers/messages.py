@@ -226,6 +226,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.debug(f"Ignoring unknown bot: {(user.username or 'no-username')}")
             return
 
+        # Partner bot message must relate to a human trigger
+        trigger_message_id = message.reply_to_message.message_id if message.reply_to_message else None
+
         # It's the partner bot!
         should_proceed, planned = await group_manager.process_partner_message(
             bot_name=bot_name,
@@ -233,7 +236,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=message.message_id,
             partner_id=user.id,
             partner_name=user.first_name,
-            text=user_message
+            text=user_message,
+            trigger_message_id=trigger_message_id
         )
         if not should_proceed:
             return
@@ -326,7 +330,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Resolve reply-to bot for routing
             reply_to_bot = _resolve_reply_to_bot(message, bot_name)
             
-            should_proceed, planned = await group_manager.process_human_message(
+            should_proceed, planned, trigger_message_id = await group_manager.process_human_message(
                 bot_name=bot_name,
                 chat_id=chat.id,
                 message_id=message.message_id,
@@ -349,7 +353,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await db.get_or_create_group(bot_name, chat.id, chat.title)
                 
             # Wait for our turn if we are second
-            await group_manager.wait_for_turn(bot_name, chat.id, planned)
+            await group_manager.wait_for_turn(bot_name, chat.id, planned, trigger_message_id)
             
             reply_to_user_name = None
 
@@ -410,7 +414,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if is_group and sent_msg_ids:
                 combined_response = ' '.join(responses)
                 display_name = 'Niyati' if bot_name == 'niyati' else 'Palak Deva'
-                await group_manager.add_bot_message(bot_name, chat.id, sent_msg_ids[0], display_name, combined_response)
+                await group_manager.add_bot_message(bot_name, chat.id, sent_msg_ids[0], display_name, combined_response, trigger_message_id)
                 logger.info(f"[{bot_name}] Saved response to shared group memory")
 
             # ── MOOD IMAGE (very rare, private only) ──
