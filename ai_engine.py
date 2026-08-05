@@ -12,6 +12,8 @@ from typing import List, Dict, Optional
 
 import httpx
 from openai import AsyncOpenAI
+from collections import deque
+from difflib import SequenceMatcher
 
 from config import Config, logger
 from characters import get_character
@@ -42,6 +44,7 @@ class AIEngine:
 
         self.current_index = 0
         self.client = None
+        self.recent_responses = deque(maxlen=10)
         self._initialize_client()
         logger.info(f"AI Engine: {len(self.groq_keys)} Groq, {len(self.gemini_keys)} Gemini, {len(self.openai_keys)} OpenAI keys")
 
@@ -205,8 +208,40 @@ class AIEngine:
         else:
             messages.append({"role": "user", "content": user_message})
 
-        # 7. Call AI
-        reply = await self._call_gpt(messages)
+        # 7. Call AI (with repetition guard)
+        max_retries = 2
+        reply = None
+        for attempt in range(max_retries + 1):
+            reply = await self._call_gpt(messages)
+            if not reply or reply.upper() == "IGNORE":
+                break
+                
+            # Repetition guard (groups only to avoid getting stuck in 1-on-1 loops if user repeats)
+            if is_group:
+                too_similar = False
+                reply_lower = reply.lower()
+                for old_reply in self.recent_responses:
+                    old_lower = old_reply.lower()
+                    ratio = SequenceMatcher(None, reply_lower, old_lower).ratio()
+                    if ratio > 0.75:
+                        too_similar = True
+                        break
+                    # Catch generic short repeats
+                    if len(reply_lower) < 40 and (reply_lower in old_lower or old_lower in reply_lower):
+                        too_similar = True
+                        break
+                
+                if too_similar:
+                    logger.warning(f"[{bot_name}] Repetition guard triggered. Retrying... (Attempt {attempt+1}/{max_retries})")
+                    reply = None
+                    # Add a random variation instruction to force a different response
+                    messages.append({"role": "system", "content": "The previous response was too similar to a recent message. Be creative and provide a completely different response."})
+                    continue
+            
+            # If we reached here, it's either not a group or not a repetition
+            if is_group and reply:
+                self.recent_responses.append(reply)
+            break
 
         if not reply:
             return character.get('error_responses', ["network issue", "thodi der mein try karo?"])

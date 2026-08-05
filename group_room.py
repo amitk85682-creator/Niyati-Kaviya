@@ -23,6 +23,7 @@ class TriggerState:
     last_responder: Optional[str] = None
     total_bot_replies: int = 0
     consecutive_bot_replies: int = 0
+    closed: bool = False
     completion_event: asyncio.Event = field(default_factory=asyncio.Event)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -42,6 +43,7 @@ class GroupRoomState:
         
         # Per-trigger state: {trigger_message_id: TriggerState}
         self.triggers: Dict[int, TriggerState] = {}
+        self.bot_message_to_trigger: Dict[int, int] = {}
         
         # Deduplication state
         self.processed_by_bot: Set[Tuple[str, int]] = set()  # (bot_name, message_id)
@@ -78,6 +80,10 @@ class GroupRoomState:
             keys = sorted(self.triggers.keys())
             for k in keys[:100]:
                 del self.triggers[k]
+        if len(self.bot_message_to_trigger) > 200:
+            keys = sorted(self.bot_message_to_trigger.keys())
+            for k in keys[:100]:
+                del self.bot_message_to_trigger[k]
         if len(self.processed_by_bot) > 1000:
             self.processed_by_bot = set(list(self.processed_by_bot)[-500:])
         if len(self.transcript_keys) > 1000:
@@ -136,6 +142,8 @@ class GroupRoomManager:
             # 2. Check if trigger already exists for this message_id (set by the other bot)
             existing_trigger = room.get_trigger(message_id)
             if existing_trigger is not None:
+                if existing_trigger.closed:
+                    return False, [], message_id
                 # Plan already computed by the other bot
                 return True, existing_trigger.planned_responders, message_id
 
@@ -220,6 +228,7 @@ class GroupRoomManager:
             # Update trigger state
             trigger = room.get_trigger(trigger_message_id)
             if trigger:
+                room.bot_message_to_trigger[message_id] = trigger_message_id
                 if bot_name in trigger.inflight_bots:
                     trigger.inflight_bots.remove(bot_name)
                     trigger.total_bot_replies += 1
@@ -229,6 +238,9 @@ class GroupRoomManager:
                     trigger.total_bot_replies += 1
                     trigger.last_responder = bot_name
                     trigger.responded_bots.add(bot_name)
+                    
+                if len(trigger.responded_bots) >= len(trigger.planned_responders):
+                    trigger.closed = True
 
     async def process_partner_message(self, bot_name: str, chat_id: int, message_id: int, 
                                       partner_id: int, partner_name: str, text: str,
@@ -262,43 +274,21 @@ class GroupRoomManager:
             
             if trigger_message_id is None:
                 return False, []
+                
+            # Lookup original human trigger if it's a bot-to-bot reply
+            if trigger_message_id in room.bot_message_to_trigger:
+                trigger_message_id = room.bot_message_to_trigger[trigger_message_id]
 
             trigger = room.get_trigger(trigger_message_id)
             if not trigger:
                 return False, []
                 
-            # If this bot is already planned for this trigger, do NOT start a reaction
-            if bot_name in trigger.planned_responders:
-                logger.debug(f"[{bot_name}] Already in plan for trigger {trigger_message_id}, skipping partner reaction")
+            if trigger.closed:
+                logger.debug(f"[{bot_name}] Trigger {trigger_message_id} is closed. Ignoring partner reaction.")
                 return False, []
                 
-            # If this bot already responded, do NOT start a reaction
-            if bot_name in trigger.responded_bots:
-                logger.debug(f"[{bot_name}] Already responded for trigger {trigger_message_id}, skipping partner reaction")
-                return False, []
-            
-            # 3. Session active?
-            if not room.has_active_human_session():
-                return False, []
-                
-            # 4. Depth limits
-            if trigger.total_bot_replies >= Config.MAX_BOT_REPLIES_PER_HUMAN_MESSAGE:
-                logger.debug(f"[{bot_name}] Max total bot replies reached")
-                return False, []
-                
-            if trigger.consecutive_bot_replies >= Config.MAX_CONSECUTIVE_BOT_TO_BOT_REPLIES:
-                logger.debug(f"[{bot_name}] Max consecutive bot replies reached")
-                return False, []
-                
-            # 5. Determine if this bot should respond
-            planned = self._decide_responders(room, message_id, partner_id, text)
-            if bot_name not in planned:
-                return False, planned
-                
-            # 6. Increment counters
-            trigger.consecutive_bot_replies += 1
-            
-            return True, planned
+            # We add to transcript, but we NEVER authorize AI generation for a partner message
+            return False, []
 
     async def get_transcript(self, chat_id: int, limit: int = 15) -> List[Dict]:
         """Get the shared transcript for this room."""

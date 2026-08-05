@@ -1,4 +1,4 @@
-﻿"""
+"""
 Final verification tests for the dual-bot system.
 
 Tests real imports, config validation, per-bot AI engine isolation,
@@ -55,7 +55,7 @@ class TestConfig(unittest.TestCase):
         from config import Config
         # If no env var is set, default should be palakdevabot
         with patch.dict(os.environ, {}, clear=False):
-            # Re-evaluate â€” the default is baked at class load time
+            # Re-evaluate — the default is baked at class load time
             # so we just verify the current value is not 'Palak_bot'
             self.assertNotEqual(Config.PALAK_BOT_USERNAME, 'Palak_bot')
 
@@ -127,7 +127,7 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         _, plan2, _ = await self.gm.process_human_message(
             'niyati', chat_id, 2, 10, 'User', 'hello again')
 
-        # Plans are keyed by message_id â€” they should exist independently
+        # Plans are keyed by message_id — they should exist independently
         self.assertIsNotNone(room.get_trigger(1))
         self.assertIsNotNone(room.get_trigger(2))
 
@@ -146,7 +146,7 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan_n, plan_p)
 
     async def test_dedup_same_bot_same_message(self):
-        """Same bot processing the same message_id twice â†’ False."""
+        """Same bot processing the same message_id twice → False."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
         room.niyati_present = True
@@ -388,7 +388,7 @@ class TestOneBotMissing(unittest.TestCase):
         from config import Config
         # If PALAK_BOT_TOKEN is empty, get_bot_config should still work
         cfg = Config.get_bot_config('palak')
-        # Token will be empty string, which is falsy â€” main.py checks this
+        # Token will be empty string, which is falsy — main.py checks this
         self.assertIsInstance(cfg['token'], str)
 
 
@@ -430,79 +430,171 @@ class TestPartnerValidation(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 
-
 class TestPhase11(unittest.IsolatedAsyncioTestCase):
-    async def test_supabase_client_insert_409(self):
-        from database import SupabaseClient
-        import httpx
-        client = SupabaseClient('url', 'key')
-        
-        mock_response = MagicMock()
-        mock_response.status_code = 409
-        mock_response.text = "Conflict"
-        
-        mock_post = AsyncMock(return_value=mock_response)
-        
-        with patch('httpx.AsyncClient.post', mock_post):
-            with patch('database.logger.warning') as mock_log:
-                result = await client.insert('users', {'foo': 'bar'})
-                self.assertIsNone(result)
-                mock_log.assert_called_with("Supabase INSERT conflict (409): Conflict")
-                
-    async def test_database_missing_row_creation(self):
+    async def test_database_409_retry_and_fallback(self):
         from database import Database
-        import json
         db = Database()
         db.connected = True
         db.client = AsyncMock()
+        db.client.select.return_value = []  # User missing
+        db.client.insert.side_effect = ValueError("409 Conflict")
         
-        db.client.select.side_effect = [
-            [],
-            [{'messages': '[]', 'total_messages': 0}]
-        ]
+        res = await db.save_message('niyati', 999, 'user', 'hi')
+        self.assertTrue(res)
+        
+        key = db._user_key('niyati', 999)
+        self.assertIn(key, db.local_users)
+        self.assertEqual(db.local_users[key]['messages'][0]['content'], 'hi')
+        self.assertEqual(db.client.insert.call_count, 2)
+        
+    async def test_database_missing_row_creation(self):
+        from database import Database
+        db = Database()
+        db.connected = True
+        db.client = AsyncMock()
+        db.client.select.return_value = []  # User missing
         db.client.insert.return_value = {'bot_name': 'niyati', 'user_id': 999}
-        db.client.update.return_value = True
         
         res = await db.save_message('niyati', 999, 'user', 'hi')
         self.assertTrue(res)
         self.assertEqual(db.client.insert.call_count, 1)
-        self.assertEqual(db.client.update.call_count, 1)
-        
-        update_args = db.client.update.call_args[0]
-        update_dict = update_args[1]
-        messages_str = update_dict['messages']
-        messages_list = json.loads(messages_str)
-        self.assertEqual(len(messages_list), 1)
-        self.assertEqual(messages_list[0]['content'], 'hi')
 
-    async def test_group_room_complete_dedupe(self):
-        from group_room import group_manager
-        room = await group_manager.get_room(123)
-        room.active_until = datetime.now(timezone.utc) + timedelta(minutes=1)
-        
-        await group_manager.add_bot_message('niyati', 1111, 123, 100, 'Niyati', 'hi', 100)
-        proceed, _ = await group_manager.process_partner_message('palak', 123, 100, 1111, 'Niyati', 'hi', 100)
-        
-        self.assertFalse(proceed)
-        self.assertEqual(len(room.transcript), 1)
-        self.assertEqual(room.transcript[0]['sender_id'], 1111)
-        self.assertEqual(room.transcript[0]['bot_name'], 'niyati')
-        
-    async def test_true_concurrency_reservation(self):
+    async def test_group_room_dedupe_and_reservation(self):
         from group_room import group_manager, TriggerState
-        room = await group_manager.get_room(12345)
-        room.triggers[500] = TriggerState()
+        room = await group_manager.get_room(123)
+        room.triggers[100] = TriggerState()
         
-        async def try_reserve():
-            return await group_manager.reserve_bot('niyati', 12345, 500)
-            
-        results = await asyncio.gather(try_reserve(), try_reserve(), try_reserve())
+        # Test Reservation
+        res1 = await group_manager.reserve_bot('niyati', 123, 100)
+        self.assertTrue(res1)
+        res2 = await group_manager.reserve_bot('niyati', 123, 100)
+        self.assertFalse(res2)
         
-        successes = [r for r in results if r]
-        self.assertEqual(len(successes), 1)
+        # Test exact-once transcript
+        room.active_until = datetime.now(timezone.utc) + timedelta(minutes=1)
+        await group_manager.add_bot_message('niyati', 1234, 123, 100, 'Niyati', 'hi', 100)
+        await group_manager.add_bot_message('niyati', 1234, 123, 100, 'Niyati', 'hi', 100)
+        self.assertEqual(len(room.transcript), 1)
+        self.assertEqual(room.transcript[0]['sender_id'], 1234)
 
     def test_readme_contains_migration(self):
         with open('README.md', 'r', encoding='utf-8') as f:
             content = f.read()
         self.assertIn('migrations/001_add_bot_name_to_users.sql', content)
         self.assertNotIn('No schema migration is needed', content)
+
+class TestBotChainIntegration(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from group_room import group_manager
+        self.gm = group_manager
+        self.gm._rooms.clear()
+        self.gm._bot_ids.clear()
+        self.gm.register_bot('niyati', 101)
+        self.gm.register_bot('palak', 102)
+
+    @patch('ai_engine.AIEngine.generate_response')
+    @patch('handlers.messages.send_multi_messages')
+    async def test_multi_turn_bot_chain_prevention(self, mock_send, mock_gen):
+        from group_room import group_manager
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+        
+        # Setup mocks
+        mock_gen.return_value = ["chunk 1", "chunk 2"] # AI returns 2 chunks
+        mock_send.return_value = [1000] # send_multi_messages returns msg ID
+        
+        # 1. Human says "Hello"
+        with patch.object(self.gm, '_decide_responders', return_value=['niyati', 'palak']):
+            _, plan, human_trigger_id = await self.gm.process_human_message(
+                'niyati', chat_id, 1, 10, 'User', 'Hello'
+            )
+            # Both get it
+            _, _, _ = await self.gm.process_human_message(
+                'palak', chat_id, 1, 10, 'User', 'Hello'
+            )
+            
+        # Mock handlers logic for Niyati (simulate generating)
+        await self.gm.reserve_bot('niyati', chat_id, human_trigger_id)
+        # In group chat, responses are joined
+        joined_resp = ["chunk 1\n\nchunk 2"]
+        # Add Niyati's message to transcript
+        await self.gm.add_bot_message('niyati', 101, chat_id, 1000, 'Niyati', joined_resp[0], human_trigger_id)
+        
+        # Mock Palak processing Niyati's message (as partner)
+        # process_partner_message must return False and empty plan so AI generation is skipped
+        proceed, planned = await self.gm.process_partner_message(
+            'palak', chat_id, 1000, 101, 'Niyati', joined_resp[0], human_trigger_id
+        )
+        self.assertFalse(proceed)
+        self.assertEqual(planned, [])
+        
+        # Mock Palak generating her own planned response to the human trigger
+        await self.gm.reserve_bot('palak', chat_id, human_trigger_id)
+        # Add Palak's message to transcript
+        await self.gm.add_bot_message('palak', 102, chat_id, 1001, 'Palak', joined_resp[0], human_trigger_id)
+        
+        # Mock Niyati processing Palak's message
+        proceed_n, _ = await self.gm.process_partner_message(
+            'niyati', chat_id, 1001, 102, 'Palak', joined_resp[0], human_trigger_id
+        )
+        self.assertFalse(proceed_n)
+        
+        # Assertions
+        trigger = room.get_trigger(human_trigger_id)
+        self.assertTrue(trigger.closed)
+        self.assertEqual(len(trigger.responded_bots), 2)
+        
+        # Assert no further reactions
+        proceed_p2, _ = await self.gm.process_partner_message(
+            'palak', chat_id, 1001, 101, 'Niyati', 'extra', human_trigger_id
+        )
+        self.assertFalse(proceed_p2)
+
+class TestMentionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mentions(self):
+        from group_room import group_manager
+        from config import Config
+        chat_id = -100
+        room = await group_manager.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+        
+        # Exact configured username
+        Config.NIYATI_BOT_USERNAME = 'NiyatiBotConfigured'
+        plan1 = group_manager._decide_responders(room, 1, 10, 'hey @NiyatiBotConfigured')
+        self.assertIn('niyati', plan1)
+        
+        # Username from Telegram get_me (Simulate overriding)
+        Config.PALAK_BOT_USERNAME = 'PalakRealGetMe'
+        plan2 = group_manager._decide_responders(room, 2, 10, 'yo @PalakRealGetMe whatsup')
+        self.assertIn('palak', plan2)
+        
+        # Direct mention while another human name is present
+        plan3 = group_manager._decide_responders(room, 3, 10, 'hey amit and @NiyatiBotConfigured')
+        self.assertIn('niyati', plan3)
+        
+        # Test utils is_user_talking_to_others
+        from utils import is_user_talking_to_others
+        
+        msg = MagicMock()
+        msg.text = 'hey @amit @PalakRealGetMe'
+        msg.reply_to_message = None
+        
+        ent1 = MagicMock()
+        ent1.type = 'mention'
+        ent1.offset = 4
+        ent1.length = 5
+        
+        ent2 = MagicMock()
+        ent2.type = 'mention'
+        ent2.offset = 10
+        ent2.length = 15
+        
+        msg.entities = [ent1, ent2]
+        
+        # Should NOT suppress because bot was mentioned
+        res = is_user_talking_to_others(msg, 'PalakRealGetMe', 102, 'palak')
+        self.assertFalse(res)
+

@@ -66,8 +66,17 @@ def _run_single(app):
         
         me = await app.bot.get_me()
         app.bot_data['bot_id'] = me.id
+        
+        # Validate startup username against Telegram get_me()
+        real_username = me.username or ""
+        configured_username = Config.NIYATI_BOT_USERNAME
+        if real_username.lower() != configured_username.lower():
+            logger.warning(f"Username mismatch for Niyati! Configured: {configured_username}, Real: {real_username}")
+            Config.NIYATI_BOT_USERNAME = real_username
+        app.bot_data['bot_username'] = real_username
+            
         group_manager.register_bot('niyati', me.id)
-        logger.info(f"Registered Niyati Bot ID: {me.id}")
+        logger.info(f"Registered Niyati Bot ID: {me.id} (@{real_username})")
         
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
@@ -102,8 +111,16 @@ def _run_both(niyati_app, palak_app):
         
         me_niyati = await niyati_app.bot.get_me()
         niyati_app.bot_data['bot_id'] = me_niyati.id
+        
+        real_username_n = me_niyati.username or ""
+        conf_username_n = Config.NIYATI_BOT_USERNAME
+        if real_username_n.lower() != conf_username_n.lower():
+            logger.warning(f"Username mismatch for Niyati! Configured: {conf_username_n}, Real: {real_username_n}")
+            Config.NIYATI_BOT_USERNAME = real_username_n
+        niyati_app.bot_data['bot_username'] = real_username_n
+            
         group_manager.register_bot('niyati', me_niyati.id)
-        logger.info(f"Registered Niyati Bot ID: {me_niyati.id}")
+        logger.info(f"Registered Niyati Bot ID: {me_niyati.id} (@{real_username_n})")
         
         await niyati_app.start()
         await niyati_app.updater.start_polling(drop_pending_updates=True)
@@ -115,8 +132,16 @@ def _run_both(niyati_app, palak_app):
         
         me_palak = await palak_app.bot.get_me()
         palak_app.bot_data['bot_id'] = me_palak.id
+        
+        real_username_p = me_palak.username or ""
+        conf_username_p = Config.PALAK_BOT_USERNAME
+        if real_username_p.lower() != conf_username_p.lower():
+            logger.warning(f"Username mismatch for Palak! Configured: {conf_username_p}, Real: {real_username_p}")
+            Config.PALAK_BOT_USERNAME = real_username_p
+        palak_app.bot_data['bot_username'] = real_username_p
+            
         group_manager.register_bot('palak', me_palak.id)
-        logger.info(f"Registered Palak Bot ID: {me_palak.id}")
+        logger.info(f"Registered Palak Bot ID: {me_palak.id} (@{real_username_p})")
         
         await palak_app.start()
         await palak_app.updater.start_polling(drop_pending_updates=True)

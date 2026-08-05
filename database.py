@@ -122,17 +122,16 @@ class SupabaseClient:
                 return result[0] if isinstance(result, list) and result else data
             elif response.status_code == 409:
                 logger.warning(f"Supabase INSERT conflict (409): {response.text}")
-                return None
+                raise ValueError("409 Conflict")
             else:
-                response.raise_for_status()
+                logger.error(f"Supabase INSERT error {response.status_code}: {response.text}")
                 return None
 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Supabase INSERT error {e.response.status_code}: {e.response.text}")
+        except ValueError:
             raise
         except Exception as e:
             logger.error(f"Supabase INSERT exception: {e}")
-            raise
+            return None
 
     async def update(self, table: str, data: Dict, filters: Dict) -> Optional[Dict]:
         """UPDATE table"""
@@ -411,20 +410,23 @@ class Database:
                             break
 
                     # User row missing, try to create it
-                    new_user_data = {
-                        'bot_name': bot_name,
-                        'user_id': user_id,
-                        'messages': json.dumps([]),
-                        'total_messages': 0,
-                        'created_at': datetime.now(timezone.utc).isoformat(),
-                        'updated_at': datetime.now(timezone.utc).isoformat()
-                    }
-                    insert_result = await self.client.insert('users', new_user_data)
-                    if insert_result is not None:
-                        # Success! Continue the loop to re-select and update.
-                        continue
-                    else:
-                        # 409 Conflict returns None (or insert failed)
+                    try:
+                        new_user_data = {
+                            'bot_name': bot_name,
+                            'user_id': user_id,
+                            'messages': json.dumps([new_msg]),
+                            'total_messages': 1,
+                            'created_at': datetime.now(timezone.utc).isoformat(),
+                            'updated_at': datetime.now(timezone.utc).isoformat()
+                        }
+                        insert_result = await self.client.insert('users', new_user_data)
+                        if insert_result is not None:
+                            return True
+                        else:
+                            logger.error(f"Save message insert failed for {bot_name}:{user_id}. Using fallback.")
+                            break
+                    except ValueError:
+                        # 409 Conflict
                         if attempt == 0:
                             await asyncio.sleep(0.5)
                             continue

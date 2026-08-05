@@ -229,8 +229,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Partner bot message must relate to a human trigger
         trigger_message_id = message.reply_to_message.message_id if message.reply_to_message else None
 
-        # It's the partner bot!
-        should_proceed, planned = await group_manager.process_partner_message(
+        # It's the partner bot! We log the message to transcript, but NEVER generate AI.
+        await group_manager.process_partner_message(
             bot_name=bot_name,
             chat_id=chat.id,
             message_id=message.message_id,
@@ -239,12 +239,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=user_message,
             trigger_message_id=trigger_message_id
         )
-        if not should_proceed:
-            return
-            
-        logger.info(f"[{bot_name}] Partner bot '{user.first_name}' spoke. Proceeding with plan: {planned}")
-        reply_to_user_name = user.first_name
-        chip_in_delay = 0
+        return
 
     else:
         # ════════════════════════════════════════════════════════════════════
@@ -408,6 +403,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     responses.append(bonus)
 
         if responses:
+            if is_group:
+                # Do not split group responses into multiple message chunks
+                responses = ['\n\n'.join(responses)]
+                
             sent_msg_ids = await send_multi_messages(
                 context.bot,
                 chat.id,
