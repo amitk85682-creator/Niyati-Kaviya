@@ -21,6 +21,16 @@ from memory import get_memory
 from utils import Mood, TimeAware
 
 
+BANNED_GENERIC_PHRASES = [
+    "acha that's good",
+    "main sunne ke liye hu",
+    "bas college ka kaam",
+    "classes attend karke notes",
+    "painting karne ki soch rahi",
+    "ghar pe araam kar rahi",
+    "honestly abhi kuch clear nahi",
+]
+
 class AIEngine:
     """
     Hybrid AI engine with multi-provider failover.
@@ -183,6 +193,22 @@ class AIEngine:
             group_context_str = "\n".join(
                 msg['content'] for msg in context_msgs[-8:]
             )
+            
+        # Generate simple social state heuristically
+        energies = ["low", "neutral", "high", "tired", "hyper"]
+        tones = ["neutral", "teasing", "serious", "casual"]
+        
+        hour = TimeAware.get_ist_time().hour
+        r_seed = user_id + hour
+        rng = random.Random(r_seed)
+        
+        social_state = {
+            "relationship_stage": "familiar" if len(context_msgs) > 3 else "new",
+            "feeling_toward_user": "casual",
+            "current_energy": rng.choice(energies),
+            "last_user_tone": rng.choice(tones),
+            "recent_topics": []
+        }
 
         # 5. Build system prompt using character's prompt builder
         system_prompt = character['build_system_prompt'](
@@ -190,8 +216,12 @@ class AIEngine:
             time_period=time_period,
             user_name=user_name,
             is_group=is_group,
-            group_context=group_context_str
+            group_context=group_context_str,
+            social_state=social_state
         )
+        
+        other_bot = 'niyati' if bot_name == 'palak' else 'palak'
+        system_prompt += f"\n\nYou are {bot_name.upper()}.\nRespond only as {bot_name.upper()}.\nNever reproduce role labels.\nNever answer a message assigned to {other_bot.upper()}."
 
         # 6. Build messages for AI
         messages = [{"role": "system", "content": system_prompt}]
@@ -208,7 +238,7 @@ class AIEngine:
         else:
             messages.append({"role": "user", "content": user_message})
 
-        # 7. Call AI (with repetition guard)
+        # 7. Call AI (with repetition guard and strict validation)
         max_retries = 2
         reply = None
         for attempt in range(max_retries + 1):
@@ -216,29 +246,42 @@ class AIEngine:
             if not reply or reply.upper() == "IGNORE":
                 break
                 
-            # Repetition guard (groups only to avoid getting stuck in 1-on-1 loops if user repeats)
+            invalid = False
+            reply_lower = reply.lower()
+            
+            # Check banned phrases
+            if any(p in reply_lower for p in BANNED_GENERIC_PHRASES):
+                invalid = True
+                
+            # Check length (reject excessively long messages)
+            if len(reply.split('\n')) > 4 or len(reply) > 300:
+                invalid = True
+                
+            # Check cross-bot speaking (e.g., Niyati:, Palak:, [Niyati], etc)
+            if f"{other_bot.capitalize()}:" in reply or f"[{other_bot.capitalize()}]" in reply:
+                invalid = True
+                
+            # Repetition guard 
             if is_group:
-                too_similar = False
-                reply_lower = reply.lower()
                 for old_reply in self.recent_responses:
                     old_lower = old_reply.lower()
                     ratio = SequenceMatcher(None, reply_lower, old_lower).ratio()
                     if ratio > 0.75:
-                        too_similar = True
+                        invalid = True
                         break
                     # Catch generic short repeats
                     if len(reply_lower) < 40 and (reply_lower in old_lower or old_lower in reply_lower):
-                        too_similar = True
+                        invalid = True
                         break
                 
-                if too_similar:
-                    logger.warning(f"[{bot_name}] Repetition guard triggered. Retrying... (Attempt {attempt+1}/{max_retries})")
-                    reply = None
-                    # Add a random variation instruction to force a different response
-                    messages.append({"role": "system", "content": "The previous response was too similar to a recent message. Be creative and provide a completely different response."})
-                    continue
+            if invalid:
+                logger.warning(f"[{bot_name}] Response rejected. Retrying... (Attempt {attempt+1}/{max_retries})")
+                reply = None
+                # Add a random variation instruction to force a different response
+                messages.append({"role": "system", "content": "The previous response was invalid (either too generic, too long, used wrong character, or repetitive). Be more natural, very short, and follow the rules."})
+                continue
             
-            # If we reached here, it's either not a group or not a repetition
+            # If we reached here, valid!
             if is_group and reply:
                 self.recent_responses.append(reply)
             break
