@@ -11,7 +11,8 @@ from .models import (
     RecentResponse,
     TurnPlan,
     ConversationSession,
-    CharacterClaim
+    CharacterClaim,
+    SHARED_WORLD
 )
 from .state_manager import state_manager, EmotionalStateManager
 from .appraisal import AppraisalEngine
@@ -41,5 +42,6 @@ __all__ = [
     'ConversationSession',
     'CharacterClaim',
     'director',
-    'ConversationDirector'
+    'ConversationDirector',
+    'SHARED_WORLD'
 ]

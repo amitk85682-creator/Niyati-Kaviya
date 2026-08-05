@@ -365,8 +365,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
             await db.get_or_create_group(bot_name, chat.id, chat.title)
                 
-            # Wait for our turn if we are second
-            await group_manager.wait_for_turn(bot_name, chat.id, turn_plan.selected_bots, trigger_message_id)
+            # For both-turns, each bot is independent – NO waiting.
+            # For single-bot turns, wait_for_turn is a no-op anyway (bot is first).
+            if not turn_plan.is_both_turn:
+                await group_manager.wait_for_turn(bot_name, chat.id, turn_plan.selected_bots, trigger_message_id)
             
             # Reserve before generating AI response
             reserved = await group_manager.reserve_bot(bot_name, chat.id, trigger_message_id)
@@ -467,11 +469,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"- emoji allowed: {'yes' if decision.allow_emoji else 'no'}\n"
         )
 
+        # Use per-bot normalized prompt for both-turns, or normalized_question from director
+        effective_user_message = user_message
+        if turn_plan:
+            bot_specific = turn_plan.get_bot_prompt(bot_name)
+            if bot_specific:
+                effective_user_message = bot_specific
+            elif turn_plan.normalized_question and turn_plan.resolved_intent in ("CLARIFY_REFERENT", "correction"):
+                effective_user_message = turn_plan.normalized_question
+
         responses = await engine.generate_response(
             bot_name=bot_name,
             user_id=user.id,
             chat_id=chat.id,
-            user_message=user_message,
+            user_message=effective_user_message,
             user_name=user.first_name,
             is_group=is_group,
             reply_to_user=reply_to_user_name,
@@ -481,6 +492,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         logger.info(f"[{bot_name}] Got {len(responses)} responses for user {user.id}")
+        
+        # ── Zero-response fallback ──────────────────────────────────────────
+        if not responses:
+            resolved_entity = turn_plan.referenced_bot if turn_plan else None
+            fallback_prompt = (
+                "Answer the user's exact question in one short natural Hinglish sentence. "
+                "Speak only for yourself. Do not change the topic. Do not use plural pronouns."
+            )
+            logger.warning(f"[Fallback] bot={bot_name} reason=all_candidates_rejected")
+            responses = await engine.generate_fallback_response(
+                bot_name=bot_name,
+                user_id=user.id,
+                chat_id=chat.id,
+                user_message=effective_user_message,
+                user_name=user.first_name,
+                is_group=is_group,
+                fallback_instruction=fallback_prompt,
+            )
+            if not responses:
+                logger.error(f"[{bot_name}] Fallback also returned 0 responses. Using state-based reply.")
+                character = __import__('characters', fromlist=['get_character']).get_character(bot_name)
+                responses = character.get('error_responses', ["thoda busy hu, baad mein?"])
 
         # Random Bonus (Private only)
         if is_private and random.random() < 0.1:
@@ -498,6 +531,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     responses.append(bonus)
 
         if responses:
+            # ── Shared-world facts guard ──────────────────────────────────────
+            resolved_entity = (turn_plan.referenced_bot if turn_plan else None) or \
+                              (turn_plan.explicit_target if turn_plan else None)
+            filtered_responses = []
+            for resp in responses:
+                if director.check_world_facts_violation(bot_name, resp, resolved_entity):
+                    logger.warning(f"[{bot_name}] World-fact violation in response, dropping.")
+                    continue
+                resp_lower = resp.lower()
+                # Reject deflecting meta-responses
+                if any(p in resp_lower for p in ["puchho toh sahi se", "sahi se puchho", "ignore kro", "ignore karo"]):
+                    logger.warning(f"[{bot_name}] Deflecting meta-response rejected.")
+                    continue
+                filtered_responses.append(resp)
+            if not filtered_responses:
+                logger.warning(f"[{bot_name}] All responses filtered by world-facts check, using fallback.")
+                character = __import__('characters', fromlist=['get_character']).get_character(bot_name)
+                filtered_responses = character.get('error_responses', ["thoda busy hu, baad mein?"])
+            responses = filtered_responses
+
             if is_group:
                 # Do not split group responses into multiple message chunks
                 responses = ['\n\n'.join(responses)]

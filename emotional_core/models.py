@@ -1,7 +1,27 @@
 from dataclasses import dataclass, field, asdict
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, FrozenSet
 from datetime import datetime, timezone
 from enum import Enum
+
+
+# ════════════════════════════════════════════════════════════════════
+# SHARED WORLD STATE  –  Immutable relationship facts shared by both bots
+# ════════════════════════════════════════════════════════════════════
+@dataclass(frozen=True)
+class SharedWorldState:
+    """Stable public facts that both bots must never contradict."""
+    # Palak and Niyati are close friends
+    friends: FrozenSet[str] = frozenset({"niyati", "palak"})
+
+    def are_friends(self, bot_a: str, bot_b: str) -> bool:
+        return bot_a in self.friends and bot_b in self.friends
+
+    def is_friend_of_bot(self, person_name: str, bot_name: str) -> bool:
+        """Return True if person_name is the other bot and they are friends."""
+        return person_name in self.friends and bot_name in self.friends and person_name != bot_name
+
+# Singleton – import this everywhere
+SHARED_WORLD = SharedWorldState()
 
 
 class ConversationAction(Enum):
@@ -221,6 +241,15 @@ class TurnPlan:
     reason: str = ""
     conversation_session_id: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    is_both_turn: bool = False
+    # Per-bot prompt override for both-turns: tuple of (bot_name, prompt) pairs
+    bot_prompts: tuple = ()  # tuple[tuple[str, str], ...]
+
+    def get_bot_prompt(self, bot_name: str) -> Optional[str]:
+        for b, p in self.bot_prompts:
+            if b == bot_name:
+                return p
+        return None
 
 @dataclass
 class ConversationSession:
@@ -237,6 +266,12 @@ class ConversationSession:
     recent_turns: int = 0
     expires_at: Optional[datetime] = None
     processed_outcomes: set[tuple[int, str]] = field(default_factory=set)
+    # Discourse referent tracking
+    last_person_entity: Optional[str] = None          # e.g. "niyati" after referent resolved
+    pending_ambiguous_question: Optional[str] = None   # original ambiguous question text
+    clarification_expected: bool = False               # True when we sent an ambiguous question
+    clarification_target_bot: Optional[str] = None     # which bot should answer after clarification
+    last_relation_reference: Optional[str] = None      # e.g. "friend", "dost"
 
 @dataclass
 class CharacterClaim:

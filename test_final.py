@@ -9,6 +9,7 @@ memory isolation, single-bot mode, and cleanup correctness.
 import os
 import asyncio
 import unittest
+from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime, timezone, timedelta
 
@@ -510,6 +511,150 @@ class TestPartnerValidation(unittest.TestCase):
 
         result = _is_trusted_partner(mock_user, 'niyati')
         self.assertTrue(result)
+
+
+
+
+class TestPhase2B1LiveFixes(IsolatedAsyncioTestCase):
+    """Phase 2B.1 – Shared-world, discourse referents, both-turn independence."""
+
+    def setUp(self):
+        from emotional_core.director import director
+        director.clear()
+
+    # A - Palak is active, ambiguous "wo" refers to Niyati
+    async def test_a_ambiguous_wo_then_clarification(self):
+        from emotional_core.director import director
+        from emotional_core.models import ResponseOutcome
+
+        # Palak becomes active
+        p1 = await director.plan_turn(1, 100, "User", 1, "palak canteen me hu", is_group=True)
+        self.assertIn("palak", p1.selected_bots)
+        await director.record_turn_outcome(
+            1, 100, 1, p1.conversation_session_id, "palak",
+            ResponseOutcome.SUCCESS, (10,), "canteen me hu"
+        )
+
+        # User sends ambiguous question
+        p2 = await director.plan_turn(1, 100, "User", 2, "wo tumhari friend?", is_group=True)
+        self.assertEqual(p2.resolved_intent, "AMBIGUOUS_REFERENT")
+        self.assertIn("palak", p2.selected_bots)  # Palak still active
+
+        # User sends clarification: "Niyati"
+        p3 = await director.plan_turn(1, 100, "User", 3, "Niyati", is_group=True)
+        self.assertEqual(p3.resolved_intent, "CLARIFY_REFERENT")
+        self.assertIn("palak", p3.selected_bots)   # Palak still the answerer
+        self.assertEqual(p3.referenced_bot, "niyati")  # Niyati resolved
+
+    # B - Normalized question after clarification
+    async def test_b_normalized_question_after_clarification(self):
+        from emotional_core.director import director
+        from emotional_core.models import ResponseOutcome
+
+        p1 = await director.plan_turn(1, 200, "User", 10, "palak kuch bolo", is_group=True)
+        await director.record_turn_outcome(
+            1, 200, 10, p1.conversation_session_id, "palak",
+            ResponseOutcome.SUCCESS, (11,), "haa"
+        )
+        # Ambiguous question
+        await director.plan_turn(1, 200, "User", 11, "Tumhari friend kaha hai wo", is_group=True)
+        # Clarification
+        p3 = await director.plan_turn(1, 200, "User", 12, "Niyati", is_group=True)
+        self.assertEqual(p3.resolved_intent, "CLARIFY_REFERENT")
+        nq = p3.normalized_question or ""
+        self.assertIn("niyati", nq.lower())
+        self.assertIn("kaha", nq.lower())
+
+    # C - Explicit speaker switch
+    async def test_c_switch_speaker_niyati_tum_batao(self):
+        from emotional_core.director import director
+
+        # Palak is active
+        p1 = await director.plan_turn(1, 300, "User", 20, "palak bolo", is_group=True)
+        from emotional_core.models import ResponseOutcome
+        await director.record_turn_outcome(
+            1, 300, 20, p1.conversation_session_id, "palak",
+            ResponseOutcome.SUCCESS, (21,), "haa"
+        )
+        # Switch to Niyati
+        p2 = await director.plan_turn(1, 300, "User", 21, "Niyati tum batao", is_group=True)
+        self.assertEqual(p2.resolved_intent, "SWITCH_SPEAKER")
+        self.assertIn("niyati", p2.selected_bots)
+
+    # D - Both-turn: two independent child plans, no waiting
+    async def test_d_both_turn_independent_no_wait(self):
+        from emotional_core.director import director
+
+        p = await director.plan_turn(1, 400, "User", 30, "Tum dono kitna ghar se bahar rehte ho", is_group=True)
+        self.assertEqual(p.selected_bots, ("niyati", "palak"))
+        self.assertTrue(p.is_both_turn)
+        niyati_prompt = p.get_bot_prompt("niyati")
+        palak_prompt  = p.get_bot_prompt("palak")
+        self.assertIsNotNone(niyati_prompt)
+        self.assertIsNotNone(palak_prompt)
+        self.assertIn("Niyati", niyati_prompt)
+        self.assertIn("Palak", palak_prompt)
+        # Each prompt addresses its own bot and forbids speaking for the other
+        self.assertIn("Answer ONLY for Niyati", niyati_prompt)
+        self.assertIn("Answer ONLY for Palak", palak_prompt)
+        # Prompts must not be identical
+        self.assertNotEqual(niyati_prompt, palak_prompt)
+
+    # E - Both-turn: one bot failing does not affect the other
+    async def test_e_both_turn_one_failure_independent(self):
+        from emotional_core.director import director
+        from emotional_core.models import ResponseOutcome
+
+        p = await director.plan_turn(1, 500, "User", 40, "tum dono batao", is_group=True)
+        self.assertTrue(p.is_both_turn)
+
+        # Niyati fails
+        recorded_fail = await director.record_turn_outcome(
+            1, 500, 40, p.conversation_session_id, "niyati",
+            ResponseOutcome.FAILED_GENERATION, (), ""
+        )
+        self.assertTrue(recorded_fail)  # should still record the attempt
+
+        # Palak succeeds independently
+        recorded_ok = await director.record_turn_outcome(
+            1, 500, 40, p.conversation_session_id, "palak",
+            ResponseOutcome.SUCCESS, (99,), "main ghar se nahi nikti zyada"
+        )
+        self.assertTrue(recorded_ok)
+
+    # F - SharedWorldState: friend facts
+    async def test_f_shared_world_friend_facts(self):
+        from emotional_core.models import SHARED_WORLD
+        self.assertTrue(SHARED_WORLD.are_friends("niyati", "palak"))
+        self.assertTrue(SHARED_WORLD.is_friend_of_bot("niyati", "palak"))
+        self.assertTrue(SHARED_WORLD.is_friend_of_bot("palak", "niyati"))
+        self.assertFalse(SHARED_WORLD.is_friend_of_bot("niyati", "niyati"))
+
+    # G - World-facts violation detection
+    async def test_g_friend_denial_rejected(self):
+        from emotional_core.director import director
+
+        self.assertTrue(
+            director.check_world_facts_violation("palak", "wo meri friend nahi hai", "niyati")
+        )
+        self.assertTrue(
+            director.check_world_facts_violation("niyati", "wo meri friend nahi", "palak")
+        )
+        # Normal response passes
+        self.assertFalse(
+            director.check_world_facts_violation("palak", "haa wo meri best friend hai", "niyati")
+        )
+
+    # G2 - TurnPlan is_both_turn flag
+    async def test_g2_both_turn_flag_in_plan(self):
+        from emotional_core.director import director
+
+        p_both = await director.plan_turn(1, 600, "User", 50, "dono batao", is_group=True)
+        self.assertTrue(p_both.is_both_turn)
+
+        director.clear()
+        p_single = await director.plan_turn(1, 600, "User", 51, "niyati batao", is_group=True)
+        self.assertFalse(p_single.is_both_turn)
 
 
 if __name__ == '__main__':

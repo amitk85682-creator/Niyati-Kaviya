@@ -317,11 +317,49 @@ class AIEngine:
 
         return responses
 
+    async def generate_fallback_response(self, bot_name: str, user_id: int, chat_id: int,
+                                          user_message: str, user_name: str,
+                                          is_group: bool = False,
+                                          fallback_instruction: str = None) -> List[str]:
+        """
+        Constrained single-attempt fallback generation used when normal
+        generation produces 0 valid candidates.
+        """
+        character = get_character(bot_name)
+        mood = Mood.get_random_mood()
+        time_period = TimeAware.get_time_period()
+        memory = get_memory(bot_name)
+        context_msgs = await memory.build_ai_context(
+            user_id=user_id, user_name=user_name, chat_id=chat_id,
+            is_group=is_group, reply_to_user=None
+        )
+        group_context_str = None
+        if is_group and context_msgs:
+            group_context_str = "\n".join(msg['content'] for msg in context_msgs[-6:])
+        system_prompt = character['build_system_prompt'](
+            mood=mood, time_period=time_period, user_name=user_name,
+            is_group=is_group, group_context=group_context_str, psychological_context=None
+        )
+        other_bot = 'niyati' if bot_name == 'palak' else 'palak'
+        constraint = (
+            fallback_instruction or
+            "Answer the user's question in one short natural Hinglish sentence. "
+            "Speak only for yourself. Do not change the topic."
+        )
+        system_prompt += f"\n\nYou are {bot_name.upper()}.\n{constraint}"
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": f"[{user_name}]: {user_message}" if is_group else user_message},
+        ]
+        reply = await self._call_gpt(messages, max_tokens=120, temp=0.7)
+        if not reply or reply.upper() == "IGNORE":
+            return []
+        return [reply.strip()]
+
     async def generate_shayari(self, mood: str = "neutral") -> str:
         """Generate a random shayari"""
         prompt = f"Write a 2 line heart-touching Hinglish shayari for {mood} mood."
         res = await self._call_gpt([{"role": "user", "content": prompt}], max_tokens=100, temp=0.9)
-        return f"✨ {res} ✨" if res else "Waah waah! ✨"
 
     async def generate_geeta_quote(self) -> str:
         """Generate a Bhagavad Gita quote"""
