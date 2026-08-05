@@ -85,6 +85,16 @@ class DailyLifeState:
 
 
 @dataclass
+class UnresolvedEvent:
+    type: str
+    source_message_id: int
+    target_bot: str
+    created_at: datetime
+    resolved: bool = False
+    intensity: float = 0.5
+
+
+@dataclass
 class CharacterRuntimeState:
     bot_name: str
     chat_id: int
@@ -93,7 +103,7 @@ class CharacterRuntimeState:
     needs: NeedState = field(default_factory=NeedState)
     relationship: RelationshipState = field(default_factory=RelationshipState)
     daily_life: DailyLifeState = field(default_factory=DailyLifeState)
-    unresolved_events: List[str] = field(default_factory=list)
+    unresolved_events: List[UnresolvedEvent] = field(default_factory=list)
     recent_actions: List[str] = field(default_factory=list)
     last_updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
@@ -104,6 +114,24 @@ class CharacterRuntimeState:
 
     def to_dict(self):
         return asdict(self)
+
+
+@dataclass
+class EmotionalInputContext:
+    bot_name: str
+    chat_id: int
+    user_id: int
+    message_id: int
+    text: str
+    is_group: bool
+    mentioned_bot_names: List[str] = field(default_factory=list)
+    replied_to_bot_name: Optional[str] = None
+    semantic_target_bot: Optional[str] = None
+    latest_human_sender_id: Optional[int] = None
+    original_human_trigger_id: Optional[int] = None
+    character_already_responded: bool = False
+    recent_group_context: List[str] = field(default_factory=list)
+    previous_character_action: Optional[str] = None
 
 
 @dataclass

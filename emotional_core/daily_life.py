@@ -21,7 +21,7 @@ class DailyLifeGenerator:
     def generate(bot_name: str, date_str: str) -> DailyLifeState:
         # Seed deterministic generation based on bot_name and date
         seed = f"{bot_name}_{date_str}".encode('utf-8')
-        h = int(hashlib.md5(seed).hexdigest(), 16)
+        h = int(hashlib.sha256(seed).hexdigest(), 16)
         
         activities = NIYATI_ACTIVITIES if bot_name.lower() == 'niyati' else PALAK_ACTIVITIES
         idx = h % len(activities)

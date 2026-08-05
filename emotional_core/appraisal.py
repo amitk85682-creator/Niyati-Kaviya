@@ -1,31 +1,33 @@
 import re
 from typing import Optional
-from .models import AppraisalResult, RelationshipState
+from .models import AppraisalResult, RelationshipState, EmotionalInputContext
 
 class AppraisalEngine:
     @staticmethod
-    def appraise(message_text: str, reply_to_bot: Optional[str] = None, relationship: Optional[RelationshipState] = None) -> AppraisalResult:
-        text = message_text.lower()
+    def appraise(context: EmotionalInputContext, relationship: Optional[RelationshipState] = None) -> AppraisalResult:
+        text = context.text.lower()
         res = AppraisalResult()
         
-        # 1. Target bot (from reply or explicit mention)
-        res.target_bot = reply_to_bot
-        if not res.target_bot:
-            if "niyati" in text and "palak" not in text:
-                res.target_bot = "niyati"
-            elif "palak" in text and "niyati" not in text:
-                res.target_bot = "palak"
-                
+        # 1. Target bot (from semantic target computed in orchestrator)
+        res.target_bot = context.semantic_target_bot
+        
         # "Arjun kon hai" logic -> Niyati
         if "arjun" in text:
             res.target_bot = "niyati"
 
         # 2. Intent & Rules
-        if "maine niyati se" in text or "tujhse nahi pucha" in text or "maine palak se" in text:
-            res.intent = "correction"
-            res.is_correction = True
-            res.emotional_weight = 0.5
-            
+        is_correction_text = "maine niyati se" in text or "tujhse nahi pucha" in text or "maine palak se" in text
+        if is_correction_text:
+            # Only genuinely a correction if the character actually interrupted recently 
+            # or the user replied directly to them
+            if context.replied_to_bot_name == context.bot_name or context.previous_character_action is not None:
+                res.intent = "correction"
+                res.is_correction = True
+                res.emotional_weight = 0.5
+            else:
+                res.intent = "statement"
+                res.emotional_weight = 0.1
+                
         elif any(w in text for w in ["sad", "dukhi", "rona", "toot", "depress", "akela", "rota"]):
             res.intent = "emotional_disclosure"
             res.is_emotional_disclosure = True
