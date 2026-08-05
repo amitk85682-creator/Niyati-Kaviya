@@ -5,6 +5,17 @@ class ConversationPolicy:
     def decide_action(state: CharacterRuntimeState, appraisal: AppraisalResult, is_group: bool, context: EmotionalInputContext = None) -> ConversationDecision:
         decision = ConversationDecision(action=ConversationAction.ANSWER, should_respond=True)
         
+        # 0. Withdrawn State Check
+        if state.dialogue.stance == "WITHDRAWN":
+            if appraisal.intent not in ["CIVIL_REENGAGEMENT", "greeting", "apology"]:
+                decision.action = ConversationAction.STAY_SILENT
+                decision.should_respond = False
+                decision.reason = "stance_is_withdrawn"
+                return decision
+            else:
+                state.dialogue.stance = "NEUTRAL"
+                state.dialogue.consecutive_hostility_count = 0
+        
         if appraisal.is_correction and context:
             repair_event = next((e for e in state.unresolved_events if e.type == "repair_interruption" and not e.resolved), None)
             
@@ -30,19 +41,43 @@ class ConversationPolicy:
             decision.reason = f"message_targeted_to_{appraisal.target_bot}"
             return decision
             
-        # C. Familiar user says "tum boring ho yrr"
+        # C. Leave Request
+        if appraisal.intent == "REQUEST_LEAVE":
+            decision.action = ConversationAction.ACKNOWLEDGE
+            decision.content_goal = "say 'theek hai' and leave immediately"
+            decision.reason = "user_requested_leave"
+            state.dialogue.stance = "WITHDRAWN"
+            import datetime
+            state.dialogue.withdrawn_until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=30)
+            return decision
+            
+        # D. Familiar user says "tum boring ho yrr"
         if appraisal.is_playful_teasing:
             decision.action = ConversationAction.TEASE
             decision.content_goal = "tease back briefly without becoming defensive"
             decision.reason = "playful_teasing"
             return decision
             
-        # D. Repeated serious insult (or single based on high irritation)
+        # E. Repeated serious insult (or single based on high irritation)
         if appraisal.is_serious_insult or state.mood.irritation > 0.7:
-            decision.action = ConversationAction.SET_BOUNDARY
-            decision.content_goal = "set boundary calmly but firmly"
-            decision.reason = "serious_insult_or_high_irritation"
+            state.dialogue.consecutive_hostility_count += 1
+            if state.dialogue.consecutive_hostility_count == 1:
+                decision.action = ConversationAction.SET_BOUNDARY
+                decision.content_goal = "set boundary calmly but firmly"
+                decision.reason = "first_serious_insult"
+            elif state.dialogue.consecutive_hostility_count == 2:
+                state.dialogue.stance = "GUARDED"
+                decision.action = ConversationAction.SET_BOUNDARY
+                decision.content_goal = "set strict boundary, no apologies"
+                decision.reason = "repeated_insult_guarded"
+            else:
+                state.dialogue.stance = "WITHDRAWN"
+                decision.action = ConversationAction.STAY_SILENT
+                decision.should_respond = False
+                decision.reason = "repeated_insult_withdrawn"
             return decision
+        else:
+            state.dialogue.consecutive_hostility_count = 0
             
         # E. User says "main sad hu"
         if appraisal.is_user_sad:

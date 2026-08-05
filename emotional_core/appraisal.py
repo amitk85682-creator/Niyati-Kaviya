@@ -55,10 +55,30 @@ class AppraisalEngine:
             res.intent = "greeting"
             res.emotional_weight = 0.1
             
+        elif any(w in text for w in ["chali jao", "chale jao", "nikalo", "yaha se jao", "leave me alone", "akela chhodo"]):
+            res.intent = "REQUEST_LEAVE"
+            res.emotional_weight = 0.8
+            res.is_serious_insult = True
+            
         elif text.strip() in ["acha", "hmm", "ok", "okay", "accha"]:
             res.intent = "acknowledgement"
             res.emotional_weight = 0.1
             res.requires_answer = False
+            
+        elif "kaha se ho" in text:
+            res.intent = "ASK_ORIGIN"
+            res.is_question = True
+            res.requires_answer = True
+            
+        elif "kahan ho" in text or "kaha ho" in text:
+            res.intent = "ASK_CURRENT_LOCATION"
+            res.is_question = True
+            res.requires_answer = True
+            
+        elif "kya kar rahi ho" in text or "kya kr rhi" in text:
+            res.intent = "ASK_CURRENT_ACTIVITY"
+            res.is_question = True
+            res.requires_answer = True
             
         elif "?" in text or any(w in text.split() for w in ["kya", "kaise", "kyu", "kon", "kab", "kahan", "kaha"]):
             res.intent = "question"

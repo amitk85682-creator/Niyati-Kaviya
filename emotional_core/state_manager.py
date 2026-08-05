@@ -102,6 +102,15 @@ class EmotionalStateManager:
         decay_sadness = hours * 0.08
         state.mood.sadness = clamp(state.mood.sadness - decay_sadness)
         
+        # Dialogue Stance Decay
+        if state.dialogue.stance != "NEUTRAL":
+            if state.dialogue.stance == "WITHDRAWN" and state.dialogue.withdrawn_until:
+                if now > state.dialogue.withdrawn_until:
+                    state.dialogue.stance = "NEUTRAL"
+                    state.dialogue.consecutive_hostility_count = 0
+            elif hours > 1.0: # Revert other stances after an hour of no interaction
+                state.dialogue.stance = "NEUTRAL"
+        
         # Update last updated at so we don't decay again
         state.last_updated_at = now
 

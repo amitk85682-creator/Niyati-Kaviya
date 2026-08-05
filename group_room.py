@@ -315,41 +315,47 @@ class GroupRoomManager:
         
         text_lower = text.lower()
         
-        # Priority 0: Reply-to a specific bot
+        # Priority 1: Reply-to a specific bot
         if reply_to_bot_name == 'niyati':
             return ['niyati']
         if reply_to_bot_name == 'palak':
             return ['palak']
-        
-        # Priority 1: "dono" or mentioning both explicitly
+            
+        # Priority 2: Explicit plural ("tum dono", "both")
         import re
         if "dono" in text_lower or "both" in text_lower or ("niyati" in text_lower and "palak" in text_lower):
             res = ['niyati', 'palak']
             rng.shuffle(res)
             return res
             
-        # Priority 2: Direct Mention
-        niyati_mentioned = bool(re.search(r'\b(niyati)\b', text_lower)) or f"@{Config.NIYATI_BOT_USERNAME.lower()}" in text_lower
-        palak_mentioned = bool(re.search(r'\b(palak|palakdevabot)\b', text_lower)) or f"@{Config.PALAK_BOT_USERNAME.lower()}" in text_lower
+        # Priority 3: Direct Mention (@username)
+        if f"@{Config.NIYATI_BOT_USERNAME.lower()}" in text_lower:
+            return ['niyati']
+        if f"@{Config.PALAK_BOT_USERNAME.lower()}" in text_lower:
+            return ['palak']
+            
+        # Priority 4: Explicit character name
+        if bool(re.search(r'\b(niyati)\b', text_lower)):
+            return ['niyati']
+        if bool(re.search(r'\b(palak|palakdevabot)\b', text_lower)):
+            return ['palak']
+            
+        # Priority 5: Active topic/entity owner
+        niyati_entities = ["arjun", "mochi", "delhi"]
+        palak_entities = ["bruno", "palakcreates", "mumbai"]
         
-        if niyati_mentioned:
-            return ['niyati']
+        for entity in niyati_entities:
+            if bool(re.search(fr'\b{entity}\b', text_lower)):
+                return ['niyati']
+                
+        for entity in palak_entities:
+            if bool(re.search(fr'\b{entity}\b', text_lower)):
+                return ['palak']
             
-        if palak_mentioned:
-            return ['palak']
-            
-        # Priority 3: General message distribution
+        # Priority 6: General one-bot selection (Exactly one bot)
+        # Avoid both bots responding unprompted to general messages like "hello"
         roll = rng.random()
-        if roll < Config.PROB_NIYATI_ONLY:
-            return ['niyati']
-        elif roll < Config.PROB_NIYATI_ONLY + Config.PROB_PALAK_ONLY:
-            return ['palak']
-        elif roll < Config.PROB_NIYATI_ONLY + Config.PROB_PALAK_ONLY + Config.PROB_BOTH:
-            res = ['niyati', 'palak']
-            rng.shuffle(res)
-            return res
-            
-        return []
+        return ['niyati'] if roll < 0.5 else ['palak']
 
     async def abort_waiters(self, chat_id: int, trigger_message_id: int):
         """Abort a trigger so waiters wake up without fallback."""

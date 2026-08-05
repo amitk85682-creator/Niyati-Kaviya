@@ -693,3 +693,103 @@ class TestProductionFixes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(appraisal.intent, "greeting")
         self.assertTrue(appraisal.directed_to_character)
         self.assertEqual(appraisal.target_bot, "palak")
+
+
+class TestPhase2A(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from group_room import group_manager
+        self.gm = group_manager
+        self.gm._rooms.clear()
+        self.gm._bot_ids.clear()
+        self.gm.register_bot('niyati', 101)
+        self.gm.register_bot('palak', 102)
+
+    async def test_semantic_routing(self):
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+
+        # Topic ownership
+        plan1 = self.gm._decide_responders(room, 1, 10, 'Arjun kon hai')
+        self.assertEqual(plan1, ['niyati'])
+        
+        plan2 = self.gm._decide_responders(room, 2, 10, 'Bruno kahan hai')
+        self.assertEqual(plan2, ['palak'])
+
+        # Plural
+        plan3 = self.gm._decide_responders(room, 3, 10, 'tum dono kahan se ho')
+        self.assertCountEqual(plan3, ['niyati', 'palak'])
+
+        # General message defaults to one responder
+        import random
+        random.seed(42)
+        plan4 = self.gm._decide_responders(room, 4, 10, 'kya kar rahi ho')
+        self.assertEqual(len(plan4), 1)
+
+    async def test_leave_request_and_withdrawal(self):
+        from emotional_core.models import CharacterRuntimeState, EmotionalInputContext
+        from emotional_core.appraisal import AppraisalEngine
+        from emotional_core.conversation_policy import ConversationPolicy
+        
+        state = CharacterRuntimeState(bot_name="palak", chat_id=1, user_id=99)
+        ctx = EmotionalInputContext(
+            bot_name="palak", chat_id=1, user_id=99, message_id=10,
+            text="chali jao", is_group=True, semantic_target_bot="palak"
+        )
+        
+        appraisal = AppraisalEngine.appraise(ctx)
+        self.assertEqual(appraisal.intent, "REQUEST_LEAVE")
+        
+        decision = ConversationPolicy.decide_action(state, appraisal, is_group=True, context=ctx)
+        self.assertEqual(decision.action.name, "ACKNOWLEDGE")
+        self.assertEqual(state.dialogue.stance, "WITHDRAWN")
+        
+        # Next message shouldn't get a response
+        ctx2 = EmotionalInputContext(
+            bot_name="palak", chat_id=1, user_id=99, message_id=11,
+            text="kya kar rahi ho", is_group=True, semantic_target_bot="palak"
+        )
+        appraisal2 = AppraisalEngine.appraise(ctx2)
+        decision2 = ConversationPolicy.decide_action(state, appraisal2, is_group=True, context=ctx2)
+        
+        self.assertEqual(decision2.action.name, "STAY_SILENT")
+        self.assertFalse(decision2.should_respond)
+
+    async def test_repeated_hostility(self):
+        from emotional_core.models import CharacterRuntimeState, EmotionalInputContext
+        from emotional_core.appraisal import AppraisalEngine
+        from emotional_core.conversation_policy import ConversationPolicy
+        
+        state = CharacterRuntimeState(bot_name="niyati", chat_id=1, user_id=99)
+        
+        # Message 1
+        ctx = EmotionalInputContext(bot_name="niyati", chat_id=1, user_id=99, message_id=10, text="tum pagal ho", is_group=True)
+        appraisal = AppraisalEngine.appraise(ctx)
+        decision = ConversationPolicy.decide_action(state, appraisal, is_group=True, context=ctx)
+        self.assertEqual(decision.action.name, "SET_BOUNDARY")
+        self.assertEqual(state.dialogue.consecutive_hostility_count, 1)
+        
+        # Message 2
+        decision2 = ConversationPolicy.decide_action(state, appraisal, is_group=True, context=ctx)
+        self.assertEqual(decision2.action.name, "SET_BOUNDARY")
+        self.assertEqual(state.dialogue.stance, "GUARDED")
+        self.assertEqual(state.dialogue.consecutive_hostility_count, 2)
+        
+        # Message 3
+        decision3 = ConversationPolicy.decide_action(state, appraisal, is_group=True, context=ctx)
+        self.assertEqual(decision3.action.name, "STAY_SILENT")
+        self.assertEqual(state.dialogue.stance, "WITHDRAWN")
+        self.assertEqual(state.dialogue.consecutive_hostility_count, 3)
+
+    async def test_fingerprinting_rejection(self):
+        from ai_engine import get_ai_engine
+        engine = get_ai_engine('niyati')
+        engine.recent_responses.append("meri galti thi")
+        
+        # Add 'humein' to check identity leak rejection
+        with patch.object(engine, '_call_gpt', side_effect=["humein koi farak nahi padta", "ignore"]):
+            res = await engine.generate_response(
+                bot_name='niyati', user_id=99, chat_id=1, user_message="test", user_name="Test", is_group=True
+            )
+            self.assertEqual(res, [])

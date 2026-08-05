@@ -114,6 +114,21 @@ class UnresolvedEvent:
 
 
 @dataclass
+class DialogueState:
+    stance: str = "NEUTRAL"
+    consecutive_hostility_count: int = 0
+    active_topic: str = ""
+    active_topic_owner: str = ""
+    last_user_intent: str = ""
+    last_character_action: str = ""
+    unresolved_boundary: bool = False
+    withdrawn_until: Optional[datetime] = None
+    support_mode_active: bool = False
+    last_civil_message_at: Optional[datetime] = None
+    recent_phrase_fingerprints: List[str] = field(default_factory=list)
+
+
+@dataclass
 class CharacterRuntimeState:
     bot_name: str
     chat_id: int
@@ -122,6 +137,7 @@ class CharacterRuntimeState:
     needs: NeedState = field(default_factory=NeedState)
     relationship: RelationshipState = field(default_factory=RelationshipState)
     daily_life: DailyLifeState = field(default_factory=DailyLifeState)
+    dialogue: DialogueState = field(default_factory=DialogueState)
     unresolved_events: List[UnresolvedEvent] = field(default_factory=list)
     recent_responses: List[RecentResponse] = field(default_factory=list)
     successful_response_count: int = 0

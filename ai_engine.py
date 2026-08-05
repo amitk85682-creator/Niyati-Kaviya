@@ -210,7 +210,7 @@ class AIEngine:
         )
         
         other_bot = 'niyati' if bot_name == 'palak' else 'palak'
-        system_prompt += f"\n\nYou are {bot_name.upper()}.\nRespond only as {bot_name.upper()}.\nNever reproduce role labels.\nNever answer a message assigned to {other_bot.upper()}."
+        system_prompt += f"\n\nYou are {bot_name.upper()}.\nRespond only as {bot_name.upper()}.\nNever reproduce role labels.\nNever answer a message assigned to {other_bot.upper()}.\nNever use 'hum dono', 'humein', or 'ja rahe hain' to speak for both."
 
         # 6. Build messages for AI
         messages = [{"role": "system", "content": system_prompt}]
@@ -246,11 +246,18 @@ class AIEngine:
             if len(reply.split('\n')) > 4 or len(reply) > 300:
                 invalid = True
                 
-            # Check cross-bot speaking (e.g., Niyati:, Palak:, [Niyati], etc)
+            # Check cross-bot speaking and plural identity leak
             if f"{other_bot.capitalize()}:" in reply or f"[{other_bot.capitalize()}]" in reply:
                 invalid = True
                 
-            # Repetition guard 
+            if "hum dono" in reply_lower or "humein" in reply_lower or "ja rahe hain" in reply_lower:
+                invalid = True
+                
+            # Repeated filler phrases
+            if any(p in reply_lower for p in ["chill karo", "gussa kyu", "gussa kiyon", "maaf kar do"]):
+                invalid = True
+                
+            # Repetition guard and Fingerprinting
             if is_group:
                 for old_reply in self.recent_responses:
                     old_lower = old_reply.lower()
@@ -262,7 +269,7 @@ class AIEngine:
                     if len(reply_lower) < 40 and (reply_lower in old_lower or old_lower in reply_lower):
                         invalid = True
                         break
-                
+                        
             if invalid:
                 logger.warning(f"[{bot_name}] Response rejected. Retrying... (Attempt {attempt+1}/{max_retries})")
                 reply = None
