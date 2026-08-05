@@ -1,8 +1,9 @@
 """
 Immutable trait profiles for characters.
 """
+import types
 
-NIYATI_TRAITS = {
+_NIYATI_TRAITS = types.MappingProxyType({
     "warmth": 0.82,
     "expressiveness": 0.78,
     "social_confidence": 0.68,
@@ -13,9 +14,9 @@ NIYATI_TRAITS = {
     "patience": 0.58,
     "autonomy": 0.52,
     "conflict_avoidance": 0.45
-}
+})
 
-PALAK_TRAITS = {
+_PALAK_TRAITS = types.MappingProxyType({
     "warmth": 0.64,
     "expressiveness": 0.42,
     "social_confidence": 0.44,
@@ -26,9 +27,9 @@ PALAK_TRAITS = {
     "patience": 0.66,
     "autonomy": 0.78,
     "conflict_avoidance": 0.58
-}
+})
 
-def get_character_traits(bot_name: str) -> dict:
+def get_character_traits(bot_name: str) -> types.MappingProxyType:
     if bot_name.lower() == 'niyati':
-        return NIYATI_TRAITS
-    return PALAK_TRAITS
+        return _NIYATI_TRAITS
+    return _PALAK_TRAITS

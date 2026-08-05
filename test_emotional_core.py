@@ -1,7 +1,7 @@
 import unittest
 import asyncio
 from datetime import datetime, timezone, timedelta
-from emotional_core.models import MoodState, NeedState, RelationshipState, CharacterRuntimeState, ConversationAction
+from emotional_core.models import MoodState, NeedState, RelationshipState, CharacterRuntimeState, ConversationAction, EmotionalInputContext, UnresolvedEvent
 from emotional_core.state_manager import state_manager
 from emotional_core.appraisal import AppraisalEngine
 from emotional_core.emotion_engine import EmotionEngine
@@ -60,34 +60,38 @@ class TestEmotionalCore(unittest.IsolatedAsyncioTestCase):
         s.relationship.familiarity = 0.5 # Familiar
         s.relationship.trust = 0.5
         
-        appraisal = AppraisalEngine.appraise("tum pagal ho", relationship=s.relationship)
+        ctx = EmotionalInputContext(bot_name="niyati", chat_id=1, user_id=99, message_id=10, text="tum pagal ho", is_group=False)
+        appraisal = AppraisalEngine.appraise(ctx, relationship=s.relationship)
         self.assertTrue(appraisal.is_playful_teasing)
         
-        EmotionEngine.apply_appraisal(s, appraisal)
+        EmotionEngine.apply_appraisal(s, appraisal, 10)
         self.assertGreater(s.mood.playfulness, 0.5)
 
     async def test_teasing_unknown(self):
         s = await state_manager.get_state("niyati", 1, 99)
         s.relationship.familiarity = 0.1 # Unknown
         
-        appraisal = AppraisalEngine.appraise("tum pagal ho", relationship=s.relationship)
+        ctx = EmotionalInputContext(bot_name="niyati", chat_id=1, user_id=99, message_id=10, text="tum pagal ho", is_group=False)
+        appraisal = AppraisalEngine.appraise(ctx, relationship=s.relationship)
         self.assertTrue(appraisal.is_serious_insult)
         
-        EmotionEngine.apply_appraisal(s, appraisal)
+        EmotionEngine.apply_appraisal(s, appraisal, 10)
         self.assertGreater(s.mood.irritation, 0.0)
 
     async def test_sadness_reduces_teasing(self):
         s = await state_manager.get_state("niyati", 1, 99)
         s.mood.playfulness = 0.8
         
-        appraisal = AppraisalEngine.appraise("main bahut dukhi hu", relationship=s.relationship)
+        ctx = EmotionalInputContext(bot_name="niyati", chat_id=1, user_id=99, message_id=10, text="main bahut dukhi hu", is_group=False)
+        appraisal = AppraisalEngine.appraise(ctx, relationship=s.relationship)
         self.assertTrue(appraisal.is_user_sad)
         
-        EmotionEngine.apply_appraisal(s, appraisal)
+        EmotionEngine.apply_appraisal(s, appraisal, 10)
         self.assertLess(s.mood.playfulness, 0.8)
 
     async def test_arjun_target_niyati(self):
-        appraisal = AppraisalEngine.appraise("Arjun kon hai")
+        ctx = EmotionalInputContext(bot_name="palak", chat_id=1, user_id=99, message_id=10, text="Arjun kon hai", is_group=True)
+        appraisal = AppraisalEngine.appraise(ctx)
         self.assertEqual(appraisal.target_bot, "niyati")
         
         s_palak = await state_manager.get_state("palak", 1, 99)
@@ -96,33 +100,37 @@ class TestEmotionalCore(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision.action, ConversationAction.STAY_SILENT)
 
     async def test_integration_repair_mistake(self):
-        # 1. Setup Palak state with repair event
         s_palak = await state_manager.get_state("palak", 1, 99)
         
-        # 2. User says "maine Niyati se pucha tha"
-        appraisal = AppraisalEngine.appraise("maine niyati se pucha tha")
-        self.assertTrue(appraisal.is_correction)
+        # Simulating palak previously responded
+        ctx1 = EmotionalInputContext(bot_name="palak", chat_id=1, user_id=99, message_id=10, text="...", is_group=True, previous_character_action="ANSWER")
+        appraisal1 = AppraisalEngine.appraise(ctx1, s_palak.relationship)
+        EmotionEngine.apply_appraisal(s_palak, appraisal1, 10)
+        await state_manager.save_state(s_palak)
         
-        # 3. Emotion update
-        EmotionEngine.apply_appraisal(s_palak, appraisal)
-        self.assertIn("repair_interruption", s_palak.unresolved_events)
+        # User corrects palak
+        ctx2 = EmotionalInputContext(bot_name="palak", chat_id=1, user_id=99, message_id=11, text="maine niyati se pucha tha", is_group=True, previous_character_action="ANSWER")
+        appraisal2 = AppraisalEngine.appraise(ctx2, s_palak.relationship)
+        self.assertTrue(appraisal2.is_correction)
+        
+        EmotionEngine.apply_appraisal(s_palak, appraisal2, 11)
+        self.assertTrue(any(e.type == "repair_interruption" for e in s_palak.unresolved_events))
         self.assertGreater(s_palak.mood.embarrassment, 0.0)
         
-        # 4. Decision
-        decision = ConversationPolicy.decide_action(s_palak, appraisal, is_group=True)
+        decision = ConversationPolicy.decide_action(s_palak, appraisal2, is_group=True)
         self.assertEqual(decision.action, ConversationAction.REPAIR_MISTAKE)
-        self.assertNotIn("repair_interruption", s_palak.unresolved_events)
+        # Should now be resolved
+        self.assertTrue(all(e.resolved for e in s_palak.unresolved_events if e.type == "repair_interruption"))
         
     async def test_simple_acknowledgement(self):
         s = await state_manager.get_state("niyati", 1, 99)
-        appraisal = AppraisalEngine.appraise("acha")
+        ctx = EmotionalInputContext(bot_name="niyati", chat_id=1, user_id=99, message_id=10, text="acha", is_group=False)
+        appraisal = AppraisalEngine.appraise(ctx)
         self.assertEqual(appraisal.intent, "acknowledgement")
         
-        # In group, acha -> silence
         decision_group = ConversationPolicy.decide_action(s, appraisal, is_group=True)
         self.assertFalse(decision_group.should_respond)
         
-        # In private, acha -> acknowledge
         decision_private = ConversationPolicy.decide_action(s, appraisal, is_group=False)
         self.assertTrue(decision_private.should_respond)
         self.assertEqual(decision_private.action, ConversationAction.ACKNOWLEDGE)

@@ -7,11 +7,12 @@ class ConversationPolicy:
         
         # A. User says "maine Niyati se pucha tha" after Palak interrupted
         # This takes precedence over staying silent when addressed to the other bot
-        if appraisal.is_correction and "repair_interruption" in state.unresolved_events:
+        repair_event = next((e for e in state.unresolved_events if e.type == "repair_interruption" and not e.resolved), None)
+        if appraisal.is_correction and repair_event:
             decision.action = ConversationAction.REPAIR_MISTAKE
             decision.content_goal = "briefly admit interruption, do not defend or blame the user"
             decision.reason = "repairing_interruption"
-            state.unresolved_events.remove("repair_interruption")
+            repair_event.resolved = True
             return decision
             
         # B. Message directed to another bot

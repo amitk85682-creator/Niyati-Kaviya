@@ -1,7 +1,8 @@
 import asyncio
+import copy
 from typing import Dict, Tuple, Optional
 from datetime import datetime, timezone
-from .models import CharacterRuntimeState, clamp
+from .models import CharacterRuntimeState, clamp, ConversationAction
 from .profiles import get_character_traits
 
 class EmotionalStateManager:
@@ -21,14 +22,24 @@ class EmotionalStateManager:
                     chat_id=chat_id,
                     user_id=user_id
                 )
-            return self._states[key]
+            return copy.deepcopy(self._states[key])
             
     async def save_state(self, state: CharacterRuntimeState):
         key = (state.bot_name.lower(), state.chat_id, state.user_id)
         async with self._lock:
             state.clamp_all()
             state.last_updated_at = datetime.now(timezone.utc)
-            self._states[key] = state
+            self._states[key] = copy.deepcopy(state)
+            
+    async def record_response_outcome(self, bot_name: str, chat_id: int, user_id: int, success: bool, action: ConversationAction):
+        key = (bot_name.lower(), chat_id, user_id)
+        async with self._lock:
+            if key in self._states:
+                state = self._states[key]
+                if success:
+                    state.recent_actions.append(action.name)
+                    if len(state.recent_actions) > 10:
+                        state.recent_actions = state.recent_actions[-10:]
             
     async def reset_state(self, bot_name: str, chat_id: int, user_id: int):
         key = (bot_name.lower(), chat_id, user_id)
@@ -39,10 +50,6 @@ class EmotionalStateManager:
     def apply_decay(self, state: CharacterRuntimeState, now: datetime):
         """
         Deterministic time-based decay of emotions.
-        - embarrassment decays relatively quickly
-        - irritation decays at medium speed
-        - playfulness decays at medium speed
-        - sadness decays slowly
         """
         elapsed = (now - state.last_updated_at).total_seconds()
         if elapsed <= 0:

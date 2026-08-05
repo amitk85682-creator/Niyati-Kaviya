@@ -26,6 +26,11 @@ from utils import (
     is_user_talking_to_others,
     send_multi_messages,
 )
+from emotional_core import (
+    state_manager, AppraisalEngine, EmotionEngine, 
+    ConversationPolicy, DailyLifeGenerator, EmotionalInputContext
+)
+from datetime import datetime, timezone
 
 # ════════════════════════════════════════════════════════════════════
 # INLINE MEDIA SYSTEM (mood images + stickers)
@@ -375,6 +380,71 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"[{bot_name}] Processing: user={user.id} ({user.first_name}), "
                      f"msg='{user_message[:50]}...', {'group' if is_group else 'private'}")
 
+        # ════════════════════════════════════════════════════════════════════
+        # EMOTIONAL CORE ORCHESTRATION
+        # ════════════════════════════════════════════════════════════════════
+        now = datetime.now(timezone.utc)
+        state = await state_manager.get_state(bot_name, chat.id, user.id)
+        prev_action = state.recent_actions[-1] if state.recent_actions else None
+        
+        reply_bot_name = _resolve_reply_to_bot(message, bot_name)
+        
+        input_context = EmotionalInputContext(
+            bot_name=bot_name,
+            chat_id=chat.id,
+            user_id=user.id,
+            message_id=message.message_id,
+            text=user_message,
+            is_group=is_group,
+            replied_to_bot_name=reply_bot_name,
+            semantic_target_bot=reply_bot_name if reply_bot_name else None,
+            previous_character_action=prev_action
+        )
+        
+        state_manager.apply_decay(state, now)
+        
+        date_str = now.strftime("%Y-%m-%d")
+        if state.daily_life.date != date_str:
+            state.daily_life = DailyLifeGenerator.generate(bot_name, date_str)
+            
+        appraisal = AppraisalEngine.appraise(input_context, state.relationship)
+        EmotionEngine.apply_appraisal(state, appraisal, message.message_id)
+        decision = ConversationPolicy.decide_action(state, appraisal, is_group)
+        
+        await state_manager.save_state(state)
+        
+        logger.info(f"[Emotion] bot={bot_name} user={user.id} intent={appraisal.intent} action={decision.action.name}")
+        
+        if not decision.should_respond:
+            logger.info(f"[Policy] bot={bot_name} respond=False reason={decision.reason}")
+            await state_manager.record_response_outcome(bot_name, chat.id, user.id, True, decision.action)
+            if is_group and 'trigger_message_id' in locals():
+                await group_manager.release_bot(bot_name, chat.id, trigger_message_id)
+            return
+
+        def label(val):
+            if val < 0.33: return "low"
+            if val < 0.66: return "medium"
+            return "high"
+            
+        psych_context = (
+            f"Current psychological state:\n"
+            f"- energy: {label(state.mood.energy)}\n"
+            f"- playfulness: {label(state.mood.playfulness)}\n"
+            f"- irritation: {label(state.mood.irritation)}\n"
+            f"- embarrassment: {label(state.mood.embarrassment)}\n"
+            f"- relationship stage: {state.relationship.stage}\n"
+            f"- trust: {label(state.relationship.trust)}\n"
+            f"- message interpretation: {appraisal.intent}\n"
+            f"- selected action: {decision.action.name}\n"
+            f"- content goal: {decision.content_goal}\n"
+            f"- current activity: {state.daily_life.current_activity} at {state.daily_life.location}\n"
+            f"- active concern: {state.daily_life.active_concern}\n"
+            f"- avoid mentioning: {'college, Bruno, painting' if bot_name == 'palak' else 'hobbies randomly'}\n"
+            f"- maximum response length: {decision.max_sentences} sentence(s)\n"
+            f"- emoji allowed: {'yes' if decision.allow_emoji else 'no'}\n"
+        )
+
         responses = await engine.generate_response(
             bot_name=bot_name,
             user_id=user.id,
@@ -382,7 +452,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_message=user_message,
             user_name=user.first_name,
             is_group=is_group,
-            reply_to_user=reply_to_user_name
+            reply_to_user=reply_to_user_name,
+            psychological_context=psych_context
         )
 
         logger.info(f"[{bot_name}] Got {len(responses)} responses for user {user.id}")
@@ -431,6 +502,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 logger.info(f"[{bot_name}] Saved response to shared group memory")
 
+            await state_manager.record_response_outcome(bot_name, chat.id, user.id, True, decision.action)
+
             # ── MOOD IMAGE (very rare, private only) ──
             if is_private and should_send_image():
                 detected_mood = detect_mood_from_text(user_message)
@@ -456,9 +529,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         else:
             logger.warning(f"[{bot_name}] No responses generated for user {user.id}")
+            await state_manager.record_response_outcome(bot_name, chat.id, user.id, False, decision.action)
 
     except Exception as e:
         logger.error(f"Message handling error ({bot_name}): {e}", exc_info=True)
+        try:
+            # We assume decision was made, if not, it will fail but it's safe
+            await state_manager.record_response_outcome(bot_name, chat.id, user.id, False, decision.action)
+        except:
+            pass
+            
         if is_group and 'trigger_message_id' in locals():
             await group_manager.release_bot(bot_name, chat.id, trigger_message_id)
         try:
