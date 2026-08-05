@@ -11,6 +11,11 @@ class AppraisalEngine:
         # 1. Target bot (from semantic target computed in orchestrator)
         res.target_bot = context.semantic_target_bot
         
+        # Determine if directed to character
+        if context.bot_name in text or f"@{context.bot_name}" in text or context.replied_to_bot_name == context.bot_name:
+            res.directed_to_character = True
+            res.target_bot = context.bot_name
+        
         # "Arjun kon hai" logic -> Niyati
         if "arjun" in text:
             res.target_bot = "niyati"
@@ -46,7 +51,7 @@ class AppraisalEngine:
                 res.emotional_weight = 0.6
                 res.social_threat = 0.4
                 
-        elif text.strip() in ["hi", "hello", "hey", "hii", "heyy"]:
+        elif re.search(r'\b(hi|hello|hey|hii|heyy)\b', text):
             res.intent = "greeting"
             res.emotional_weight = 0.1
             

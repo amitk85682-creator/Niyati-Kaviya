@@ -555,13 +555,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Message handling error ({bot_name}): {e}", exc_info=True)
         try:
-            # We assume decision was made, if not, it will fail but it's safe
-            await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.FAILED_SEND)
+            await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.FAILED_GENERATION)
         except:
             pass
             
         if is_group and 'trigger_message_id' in locals():
             await group_manager.release_bot(bot_name, chat.id, trigger_message_id)
+            await group_manager.abort_waiters(chat.id, trigger_message_id)
         try:
             await message.reply_text("oops kuch gadbad... retry karo? 🫶")
         except:

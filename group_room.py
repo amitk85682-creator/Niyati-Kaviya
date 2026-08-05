@@ -24,6 +24,7 @@ class TriggerState:
     total_bot_replies: int = 0
     consecutive_bot_replies: int = 0
     closed: bool = False
+    aborted: bool = False
     completion_event: asyncio.Event = field(default_factory=asyncio.Event)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -316,32 +317,25 @@ class GroupRoomManager:
         
         # Priority 0: Reply-to a specific bot
         if reply_to_bot_name == 'niyati':
-            if rng.random() < Config.PROB_CHIP_IN:
-                return ['niyati', 'palak']
             return ['niyati']
         if reply_to_bot_name == 'palak':
-            if rng.random() < Config.PROB_CHIP_IN:
-                return ['palak', 'niyati']
             return ['palak']
         
         # Priority 1: "dono" or mentioning both explicitly
-        if "dono" in text_lower or ("niyati" in text_lower and "palak" in text_lower):
+        import re
+        if "dono" in text_lower or "both" in text_lower or ("niyati" in text_lower and "palak" in text_lower):
             res = ['niyati', 'palak']
             rng.shuffle(res)
             return res
             
         # Priority 2: Direct Mention
-        niyati_mentioned = "niyati" in text_lower or f"@{Config.NIYATI_BOT_USERNAME.lower()}" in text_lower
-        palak_mentioned = "palak" in text_lower or f"@{Config.PALAK_BOT_USERNAME.lower()}" in text_lower
+        niyati_mentioned = bool(re.search(r'\b(niyati)\b', text_lower)) or f"@{Config.NIYATI_BOT_USERNAME.lower()}" in text_lower
+        palak_mentioned = bool(re.search(r'\b(palak|palakdevabot)\b', text_lower)) or f"@{Config.PALAK_BOT_USERNAME.lower()}" in text_lower
         
         if niyati_mentioned:
-            if rng.random() < Config.PROB_CHIP_IN:
-                return ['niyati', 'palak']
             return ['niyati']
             
         if palak_mentioned:
-            if rng.random() < Config.PROB_CHIP_IN:
-                return ['palak', 'niyati']
             return ['palak']
             
         # Priority 3: General message distribution
@@ -356,6 +350,16 @@ class GroupRoomManager:
             return res
             
         return []
+
+    async def abort_waiters(self, chat_id: int, trigger_message_id: int):
+        """Abort a trigger so waiters wake up without fallback."""
+        room = await self.get_room(chat_id)
+        async with room.lock:
+            trigger = room.get_trigger(trigger_message_id)
+            if trigger:
+                trigger.closed = True
+                if hasattr(trigger, 'aborted'):
+                    trigger.aborted = True
 
     async def wait_for_turn(self, bot_name: str, chat_id: int, planned: List[str], trigger_message_id: int):
         """
@@ -374,7 +378,12 @@ class GroupRoomManager:
                 room = await self.get_room(chat_id)
                 async with room.lock:
                     trigger = room.get_trigger(trigger_message_id)
-                    if trigger and trigger.last_responder == planned[0]:
+                    if not trigger:
+                        return
+                    if getattr(trigger, 'aborted', False) or trigger.closed:
+                        logger.info(f"[{bot_name}] Trigger aborted or closed, cancelling wait.")
+                        return
+                    if trigger.last_responder == planned[0]:
                         logger.info(f"[{bot_name}] {planned[0]} responded. My turn!")
                         break
             else:

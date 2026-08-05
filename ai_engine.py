@@ -206,7 +206,7 @@ class AIEngine:
             user_name=user_name,
             is_group=is_group,
             group_context=group_context_str,
-            psychological_context=psych_context
+            psychological_context=psychological_context
         )
         
         other_bot = 'niyati' if bot_name == 'palak' else 'palak'

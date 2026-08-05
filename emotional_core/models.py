@@ -157,16 +157,16 @@ class EmotionalInputContext:
 
 @dataclass
 class AppraisalResult:
-    directed_to_character: bool = True
     target_bot: Optional[str] = None
     intent: str = "unknown"
     tone: str = "neutral"
     is_question: bool = False
     is_correction: bool = False
-    is_playful_teasing: bool = False
-    is_serious_insult: bool = False
     is_emotional_disclosure: bool = False
+    is_serious_insult: bool = False
+    is_playful_teasing: bool = False
     is_user_sad: bool = False
+    directed_to_character: bool = False
     social_threat: float = 0.0
     emotional_weight: float = 0.1
     novelty: float = 0.1

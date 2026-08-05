@@ -598,3 +598,98 @@ class TestMentionTests(unittest.IsolatedAsyncioTestCase):
         res = is_user_talking_to_others(msg, 'PalakRealGetMe', 102, 'palak')
         self.assertFalse(res)
 
+
+class TestProductionFixes(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from group_room import group_manager
+        self.gm = group_manager
+        self.gm._rooms.clear()
+        self.gm._bot_ids.clear()
+        self.gm.register_bot('niyati', 101)
+        self.gm.register_bot('palak', 102)
+
+    async def test_targeting_routing(self):
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        room.niyati_present = True
+        room.palak_present = True
+
+        # "Hello Palak" plans only Palak
+        plan_p = self.gm._decide_responders(room, 1, 10, 'Hello Palak')
+        self.assertEqual(plan_p, ['palak'])
+
+        # "Niyati ghar par kon hai" plans only Niyati
+        plan_n = self.gm._decide_responders(room, 2, 10, 'Niyati ghar par kon hai')
+        self.assertEqual(plan_n, ['niyati'])
+
+        # "tum dono kya kar rahi ho" plans both
+        plan_b = self.gm._decide_responders(room, 3, 10, 'tum dono kya kar rahi ho')
+        self.assertCountEqual(plan_b, ['niyati', 'palak'])
+
+        # "hello" uses ordinary coordinator behaviour (could be any, but usually 1 or 2)
+        import random
+        random.seed(123)
+        plan_h = self.gm._decide_responders(room, 4, 10, 'hello')
+        self.assertTrue(len(plan_h) > 0)
+
+    async def test_abort_waiters(self):
+        chat_id = -100
+        room = await self.gm.get_room(chat_id)
+        
+        # Setup trigger
+        from group_room import TriggerState
+        trigger = TriggerState(planned_responders=['palak', 'niyati'])
+        room.triggers[100] = trigger
+        
+        # Start wait for niyati
+        wait_task = asyncio.create_task(self.gm.wait_for_turn('niyati', chat_id, ['palak', 'niyati'], 100))
+        
+        # Abort it
+        await asyncio.sleep(0.1)
+        await self.gm.abort_waiters(chat_id, 100)
+        
+        # Should finish very fast, not 15 seconds
+        await asyncio.wait_for(wait_task, timeout=1.0)
+        self.assertTrue(trigger.closed)
+        self.assertTrue(trigger.aborted)
+
+    @patch('ai_engine.AIEngine._call_gpt')
+    async def test_ai_engine_generate_response_args(self, mock_call):
+        mock_call.return_value = "Mock response"
+        from ai_engine import get_ai_engine
+        engine = get_ai_engine('niyati')
+        
+        try:
+            res = await engine.generate_response(
+                bot_name='niyati',
+                user_id=99,
+                chat_id=1,
+                user_message="hi",
+                user_name="Test",
+                is_group=False,
+                psychological_context="Mock psych context"
+            )
+            self.assertEqual(res, ["Mock response"])
+            
+            # Assert psychological_context was used
+            call_args = mock_call.call_args[0][0]
+            system_prompt = call_args[0]['content']
+            self.assertIn("Mock psych context", system_prompt)
+        except NameError as e:
+            self.fail(f"generate_response raised NameError: {e}")
+
+    def test_appraisal_greeting_directed(self):
+        from emotional_core.appraisal import AppraisalEngine
+        from emotional_core.models import EmotionalInputContext
+        
+        ctx = EmotionalInputContext(
+            bot_name="palak",
+            chat_id=1, user_id=99, message_id=10,
+            text="Hello Palak", is_group=True,
+            semantic_target_bot="palak"
+        )
+        appraisal = AppraisalEngine.appraise(ctx)
+        
+        self.assertEqual(appraisal.intent, "greeting")
+        self.assertTrue(appraisal.directed_to_character)
+        self.assertEqual(appraisal.target_bot, "palak")
