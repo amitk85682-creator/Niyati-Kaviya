@@ -341,8 +341,8 @@ class GroupRoomManager:
             return ['palak']
             
         # Priority 5: Active topic/entity owner
-        niyati_entities = ["arjun", "mochi", "delhi"]
-        palak_entities = ["bruno", "palakcreates", "mumbai"]
+        niyati_entities = ["arjun", "mochi"]
+        palak_entities = ["bruno", "palakcreates"]
         
         for entity in niyati_entities:
             if bool(re.search(fr'\b{entity}\b', text_lower)):
@@ -351,6 +351,12 @@ class GroupRoomManager:
         for entity in palak_entities:
             if bool(re.search(fr'\b{entity}\b', text_lower)):
                 return ['palak']
+                
+        if "delhi" in text_lower and any(w in text_lower for w in ["kaha", "kahan", "rehti", "city", "se ho"]):
+            return ['niyati']
+            
+        if "mumbai" in text_lower and any(w in text_lower for w in ["kaha", "kahan", "rehti", "city", "se ho"]):
+            return ['palak']
             
         # Priority 6: General one-bot selection (Exactly one bot)
         # Avoid both bots responding unprompted to general messages like "hello"

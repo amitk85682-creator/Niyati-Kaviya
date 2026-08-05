@@ -13,8 +13,8 @@ class ConversationPolicy:
                 decision.reason = "stance_is_withdrawn"
                 return decision
             else:
-                state.dialogue.stance = "NEUTRAL"
-                state.dialogue.consecutive_hostility_count = 0
+                state.dialogue.stance = "GUARDED"
+                state.dialogue.consecutive_hostility_count = 1
         
         if appraisal.is_correction and context:
             repair_event = next((e for e in state.unresolved_events if e.type == "repair_interruption" and not e.resolved), None)

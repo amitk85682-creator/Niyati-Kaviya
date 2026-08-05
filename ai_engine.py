@@ -56,7 +56,6 @@ class AIEngine:
 
         self.current_index = 0
         self.client = None
-        self.recent_responses = deque(maxlen=10)
         self._initialize_client()
         logger.info(f"AI Engine: {len(self.groq_keys)} Groq, {len(self.gemini_keys)} Gemini, {len(self.openai_keys)} OpenAI keys")
 
@@ -169,7 +168,8 @@ class AIEngine:
                                  user_message: str, user_name: str,
                                  is_group: bool = False,
                                  reply_to_user: str = None,
-                                 psychological_context: str = None) -> List[str]:
+                                 psychological_context: str = None,
+                                 recent_responses: List[str] = None) -> List[str]:
         """
         Generate AI response for a bot.
         """
@@ -258,8 +258,8 @@ class AIEngine:
                 invalid = True
                 
             # Repetition guard and Fingerprinting
-            if is_group:
-                for old_reply in self.recent_responses:
+            if is_group and recent_responses:
+                for old_reply in recent_responses:
                     old_lower = old_reply.lower()
                     ratio = SequenceMatcher(None, reply_lower, old_lower).ratio()
                     if ratio > 0.75:
@@ -278,8 +278,6 @@ class AIEngine:
                 continue
             
             # If we reached here, valid!
-            if is_group and reply:
-                self.recent_responses.append(reply)
             break
 
         if not reply:

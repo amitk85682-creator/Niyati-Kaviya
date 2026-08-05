@@ -785,11 +785,12 @@ class TestPhase2A(unittest.IsolatedAsyncioTestCase):
     async def test_fingerprinting_rejection(self):
         from ai_engine import get_ai_engine
         engine = get_ai_engine('niyati')
-        engine.recent_responses.append("meri galti thi")
+        recent_fingerprints = ["meri galti thi"]
         
         # Add 'humein' to check identity leak rejection
         with patch.object(engine, '_call_gpt', side_effect=["humein koi farak nahi padta", "ignore"]):
             res = await engine.generate_response(
-                bot_name='niyati', user_id=99, chat_id=1, user_message="test", user_name="Test", is_group=True
+                bot_name='niyati', user_id=99, chat_id=1, user_message="test", user_name="Test", is_group=True,
+                recent_responses=recent_fingerprints
             )
             self.assertEqual(res, [])

@@ -462,7 +462,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_name=user.first_name,
             is_group=is_group,
             reply_to_user=reply_to_user_name,
-            psychological_context=psych_context
+            psychological_context=psych_context,
+            recent_responses=state.dialogue.recent_phrase_fingerprints
         )
 
         logger.info(f"[{bot_name}] Got {len(responses)} responses for user {user.id}")
@@ -522,6 +523,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     created_at=now
                 )
                 await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.SUCCESS, recent_resp)
+                
+                if is_group:
+                    def fingerprint_mutator(s):
+                        for resp in responses:
+                            s.dialogue.recent_phrase_fingerprints.append(resp)
+                        if len(s.dialogue.recent_phrase_fingerprints) > 10:
+                            s.dialogue.recent_phrase_fingerprints = s.dialogue.recent_phrase_fingerprints[-10:]
+                    await state_manager.mutate_state(bot_name, chat.id, user.id, fingerprint_mutator)
             else:
                 await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.FAILED_SEND)
 
