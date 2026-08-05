@@ -333,7 +333,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_to_bot = _resolve_reply_to_bot(message, bot_name)
             
             # Use the central ConversationDirector
-            turn_plan = await director.process_message(
+            turn_plan = await director.plan_turn(
                 chat_id=chat.id,
                 user_id=user.id,
                 user_name=user.first_name,
@@ -548,39 +548,53 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         # Extract and save claims
                         combined_resp = " ".join(responses).lower()
                         claim_type = None
-                        if any(w in combined_resp for w in ["so rahi", "neend", "sleepy", "sone ja"]):
-                            claim_type = "current_feeling:sleepy"
+                        cval = None
+                        confidence = 1.0
+                        
+                        # Skip extraction if it's a question about the claim
+                        if "kya main" in combined_resp and "?" in combined_resp:
+                            pass
+                        elif any(w in combined_resp for w in ["so rahi", "neend", "sleepy", "sone ja"]):
+                            if "neend nahi" in combined_resp or "not sleepy" in combined_resp:
+                                pass
+                            else:
+                                claim_type = "current_feeling"
+                                cval = "sleepy"
+                                if "shayad" in combined_resp or "maybe" in combined_resp or "thoda" in combined_resp:
+                                    confidence = 0.5
                         elif any(w in combined_resp for w in ["kaam kar", "busy", "padhai"]):
-                            claim_type = "current_activity:busy"
-                        elif any(w in combined_resp for w in ["sad", "dukhi", "cry"]):
-                            claim_type = "current_feeling:sad"
+                            if "free" in combined_resp or "nahi kar" in combined_resp:
+                                pass
+                            else:
+                                claim_type = "current_activity"
+                                cval = "busy"
+                        elif any(w in combined_resp for w in ["sad", "dukhi", "cry", "rota"]):
+                            claim_type = "current_feeling"
+                            cval = "sad"
                         elif any(w in combined_resp for w in ["bore", "boring", "pak rahi"]):
-                            claim_type = "current_feeling:bored"
+                            claim_type = "current_feeling"
+                            cval = "bored"
                             
-                        if claim_type:
+                        if claim_type and cval:
                             from emotional_core.models import CharacterClaim
-                            ctype, cval = claim_type.split(':')
-                            s.claims[ctype] = CharacterClaim(
+                            from datetime import timedelta
+                            s.claims[claim_type] = CharacterClaim(
                                 bot_name=bot_name,
-                                claim_type=ctype,
+                                claim_type=claim_type,
                                 value=cval,
                                 reason="generated_response",
                                 source_human_message_id=message.message_id,
                                 source_bot_message_id=sent_msg_ids[0],
-                                created_at=now
+                                created_at=now,
+                                valid_until=now + timedelta(hours=1),
+                                confidence=confidence,
+                                superseded=False
                             )
                             
                     await state_manager.mutate_state(bot_name, chat.id, user.id, fingerprint_mutator)
                     
                     # Update Director
-                    combined_resp = " ".join(responses).lower()
-                    claim_type = None
-                    if any(w in combined_resp for w in ["so rahi", "neend", "sleepy", "sone ja"]):
-                        claim_type = "current_feeling:sleepy"
-                    elif "bore" in combined_resp:
-                        claim_type = "current_feeling:bored"
-                        
-                    await director.register_bot_response(chat.id, user.id, bot_name, sent_msg_ids[0], claim_type)
+                    await director.record_turn_outcome(chat.id, user.id, bot_name, sent_msg_ids[0], claim_type)
             else:
                 await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.FAILED_SEND)
 

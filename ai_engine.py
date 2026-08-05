@@ -273,11 +273,18 @@ class AIEngine:
             # Claim Consistency Validation
             if active_claims:
                 for ctype, claim in active_claims.items():
+                    # Reject direct negation of active claims
                     if ctype == "current_feeling" and claim.value == "sleepy":
-                        if "bore" in reply_lower or "boring" in reply_lower:
-                            if not any(w in reply_lower for w in ["ab", "but", "par", "fresh"]):
+                        if "neend nahi" in reply_lower or "bilkul sleepy nahi" in reply_lower:
+                            invalid = True
+                            logger.warning(f"[{bot_name}] Contradicts claim: directly negated feeling sleepy")
+                            break
+                        
+                        # If user asked reason (why are you sleepy?), AI must answer about sleepy, not just switch to bored
+                        if "bored" in reply_lower or "bore" in reply_lower:
+                            if "sleep" not in reply_lower and "neend" not in reply_lower and "soyi" not in reply_lower and "sone" not in reply_lower and "thak" not in reply_lower:
                                 invalid = True
-                                logger.warning(f"[{bot_name}] Contradicts claim: feeling sleepy but said bored without transition")
+                                logger.warning(f"[{bot_name}] Contradicts claim: replaced sleepy with bored without explaining sleepy")
                                 break
                                 
             if invalid:

@@ -63,8 +63,8 @@ class AppraisalEngine:
                 res.intent = "SUGGEST_SLEEP"
                 res.emotional_weight = 0.3
             else:
-                res.intent = "greeting"
-                res.emotional_weight = 0.1
+                res.intent = "SUGGEST_SLEEP"
+                res.emotional_weight = 0.2
                 
         elif re.search(r'\b(hello|hey|hii|heyy)\b', text):
             # removed 'hi' from greeting to avoid 'bachhe aese hi hote hain' mismatch

@@ -17,32 +17,46 @@ class TestImports(unittest.TestCase):
     """Verify all critical modules import without error."""
 
     def test_import_config(self):
+        from emotional_core.director import director
+        director.clear()
         from config import Config, logger
         self.assertTrue(hasattr(Config, 'NIYATI_BOT_TOKEN'))
         self.assertTrue(hasattr(Config, 'PALAK_BOT_TOKEN'))
         self.assertTrue(hasattr(Config, 'PALAK_BOT_USERNAME'))
 
     def test_import_ai_engine(self):
+        from emotional_core.director import director
+        director.clear()
         from ai_engine import get_ai_engine, AIEngine
         self.assertTrue(callable(get_ai_engine))
 
     def test_import_group_room(self):
+        from emotional_core.director import director
+        director.clear()
         from group_room import group_manager, GroupRoomState, GroupRoomManager
         self.assertIsInstance(group_manager, GroupRoomManager)
 
     def test_import_memory(self):
+        from emotional_core.director import director
+        director.clear()
         from memory import get_memory, MemoryManager
         self.assertTrue(callable(get_memory))
 
     def test_import_handlers_messages(self):
+        from emotional_core.director import director
+        director.clear()
         from handlers.messages import handle_message
         self.assertTrue(callable(handle_message))
 
     def test_import_bot(self):
+        from emotional_core.director import director
+        director.clear()
         from bot import create_bot, setup_jobs
         self.assertTrue(callable(create_bot))
 
     def test_import_main(self):
+        from emotional_core.director import director
+        director.clear()
         import main
         self.assertTrue(hasattr(main, 'main'))
 
@@ -51,6 +65,8 @@ class TestConfig(unittest.TestCase):
     """Test Config validation with realistic environment strings."""
 
     def test_palak_username_default(self):
+        from emotional_core.director import director
+        director.clear()
         """PALAK_BOT_USERNAME must default to 'palakdevabot'."""
         from config import Config
         # If no env var is set, default should be palakdevabot
@@ -60,23 +76,31 @@ class TestConfig(unittest.TestCase):
             self.assertNotEqual(Config.PALAK_BOT_USERNAME, 'Palak_bot')
 
     def test_get_bot_config_niyati(self):
+        from emotional_core.director import director
+        director.clear()
         from config import Config
         cfg = Config.get_bot_config('niyati')
         self.assertIn('token', cfg)
         self.assertIn('username', cfg)
 
     def test_get_bot_config_palak(self):
+        from emotional_core.director import director
+        director.clear()
         from config import Config
         cfg = Config.get_bot_config('palak')
         self.assertIn('token', cfg)
         self.assertIn('username', cfg)
 
     def test_get_bot_config_unknown_raises(self):
+        from emotional_core.director import director
+        director.clear()
         from config import Config
         with self.assertRaises(ValueError):
             Config.get_bot_config('Palak')  # uppercase must fail
 
     def test_get_bot_config_unknown_random(self):
+        from emotional_core.director import director
+        director.clear()
         from config import Config
         with self.assertRaises(ValueError):
             Config.get_bot_config('randombot')
@@ -86,18 +110,24 @@ class TestAIEngineRegistry(unittest.TestCase):
     """Verify per-bot AI engine instances are separate."""
 
     def test_engines_are_different_objects(self):
+        from emotional_core.director import director
+        director.clear()
         from ai_engine import get_ai_engine
         e1 = get_ai_engine('niyati')
         e2 = get_ai_engine('palak')
         self.assertIsNot(e1, e2)
 
     def test_engine_persistence(self):
+        from emotional_core.director import director
+        director.clear()
         from ai_engine import get_ai_engine
         e1 = get_ai_engine('niyati')
         e2 = get_ai_engine('niyati')
         self.assertIs(e1, e2)
 
     def test_engine_case_normalization(self):
+        from emotional_core.director import director
+        director.clear()
         from ai_engine import get_ai_engine
         e1 = get_ai_engine('Niyati')
         e2 = get_ai_engine('niyati')
@@ -116,6 +146,8 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         self.gm.register_bot('palak', 102)
 
     async def test_fresh_plan_per_message_id(self):
+        from emotional_core.director import director
+        director.clear()
         """Each message_id must produce its own plan."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
@@ -136,6 +168,8 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(room.get_trigger(2))
 
     async def test_same_plan_for_both_bots(self):
+        from emotional_core.director import director
+        director.clear()
         """Both bots seeing the same message_id must get the same plan."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
@@ -154,6 +188,8 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan_n, plan_p)
 
     async def test_dedup_same_bot_same_message(self):
+        from emotional_core.director import director
+        director.clear()
         """Same bot processing the same message_id twice → False."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
@@ -171,13 +207,15 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(proceed2)
 
     async def test_reply_to_niyati_routes_to_niyati(self):
+        from emotional_core.director import director
+        director.clear()
         """Reply-to Niyati's message must include niyati in plan."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
         room.niyati_present = True
         room.palak_present = True
         from emotional_core.director import director
-        plan = await director.process_message(chat_id, 10, 'User', 20, 'what do you think?', reply_to_bot_name='niyati', is_group=True)
+        plan = await director.plan_turn(chat_id, 10, 'User', 20, 'what do you think?', reply_to_bot_name='niyati', is_group=True)
 
         _, plan_res, _ = await self.gm.process_human_message(
             'niyati', chat_id, 20, 10, 'User', 'what do you think?', turn_plan=plan)
@@ -185,13 +223,15 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         self.assertIn('niyati', plan_res)
 
     async def test_reply_to_palak_routes_to_palak(self):
+        from emotional_core.director import director
+        director.clear()
         """Reply-to Palak's message must include palak in plan."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
         room.niyati_present = True
         room.palak_present = True
         from emotional_core.director import director
-        plan = await director.process_message(chat_id, 10, 'User', 21, 'tell me more', reply_to_bot_name='palak', is_group=True)
+        plan = await director.plan_turn(chat_id, 10, 'User', 21, 'tell me more', reply_to_bot_name='palak', is_group=True)
 
         _, plan_res, _ = await self.gm.process_human_message(
             'palak', chat_id, 21, 10, 'User', 'tell me more', turn_plan=plan)
@@ -199,13 +239,15 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         self.assertIn('palak', plan_res)
 
     async def test_single_bot_presence(self):
+        from emotional_core.director import director
+        director.clear()
         """If only niyati is present, she must be the sole responder."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
         room.niyati_present = True
         room.palak_present = False
         from emotional_core.director import director
-        plan = await director.process_message(chat_id, 10, 'User', 30, 'hello palak', is_group=True)
+        plan = await director.plan_turn(chat_id, 10, 'User', 30, 'hello palak', is_group=True)
         # Note: In phase2b, missing bots skip processing via messages.py check.
         _, plan_res, _ = await self.gm.process_human_message(
             'niyati', chat_id, 30, 10, 'User', 'hello palak', turn_plan=plan)
@@ -213,6 +255,8 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(True) # Verified via director
 
     async def test_bot_loop_prevention(self):
+        from emotional_core.director import director
+        director.clear()
         """Bot-to-bot replies must stop at configured limits."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
@@ -238,6 +282,8 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(proceed2)
 
     async def test_bot_message_counts_toward_limit(self):
+        from emotional_core.director import director
+        director.clear()
         """add_bot_message must increment the reply counter in TriggerState."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
@@ -257,6 +303,8 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(trigger.total_bot_replies, 1)
 
     async def test_no_session_from_bot_message(self):
+        from emotional_core.director import director
+        director.clear()
         """A bot message must NOT open or refresh a human session."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
@@ -267,6 +315,8 @@ class TestGroupRoomCoordination(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(room.has_active_human_session())
 
     async def test_both_selected_bots_respond_exactly_once(self):
+        from emotional_core.director import director
+        director.clear()
         """If plan is [Niyati, Palak], Palak seeing Niyati's message must NOT trigger a second AI delay path."""
         chat_id = -100
         room = await self.gm.get_room(chat_id)
@@ -305,6 +355,8 @@ class TestMemoryIsolation(unittest.IsolatedAsyncioTestCase):
         self.db.local_users.clear()
 
     async def test_private_memory_isolated(self):
+        from emotional_core.director import director
+        director.clear()
         from memory import get_memory
         mem_n = get_memory('niyati')
         mem_p = get_memory('palak')
@@ -348,6 +400,8 @@ class TestSupabaseIsolation(unittest.IsolatedAsyncioTestCase):
         self.db.client.update.return_value = {'bot_name': 'mock', 'user_id': 1}
 
     async def test_supabase_bot_name_queries(self):
+        from emotional_core.director import director
+        director.clear()
         await self.db.get_or_create_user('niyati', 99, 'Test')
         self.db.client.select.assert_called_with('users', '*', {'bot_name': 'niyati', 'user_id': 99})
 
@@ -368,6 +422,8 @@ class TestRateLimiting(unittest.IsolatedAsyncioTestCase):
         self.rl.requests.clear()
 
     async def test_independent_cooldown(self):
+        from emotional_core.director import director
+        director.clear()
         """Niyati's cooldown must not block Palak."""
         user_id = 1
 
@@ -388,11 +444,15 @@ class TestCleanup(unittest.IsolatedAsyncioTestCase):
     """Test that cleanup_cooldowns is properly awaitable."""
 
     async def test_cleanup_is_coroutine(self):
+        from emotional_core.director import director
+        director.clear()
         from utils import rate_limiter
         import inspect
         self.assertTrue(inspect.iscoroutinefunction(rate_limiter.cleanup_cooldowns))
 
     async def test_cleanup_runs(self):
+        from emotional_core.director import director
+        director.clear()
         from utils import rate_limiter
         # Force cleanup by setting old timestamp
         rate_limiter._last_cleanup = datetime.now(timezone.utc) - timedelta(hours=2)
@@ -404,6 +464,8 @@ class TestOneBotMissing(unittest.TestCase):
     """Test graceful operation when one bot token is missing."""
 
     def test_palak_token_missing_no_crash(self):
+        from emotional_core.director import director
+        director.clear()
         from config import Config
         # If PALAK_BOT_TOKEN is empty, get_bot_config should still work
         cfg = Config.get_bot_config('palak')
@@ -415,6 +477,8 @@ class TestPartnerValidation(unittest.TestCase):
     """Test trusted partner checks."""
 
     def test_username_none_safe(self):
+        from emotional_core.director import director
+        director.clear()
         """user.username being None must not crash."""
         from handlers.messages import _is_trusted_partner
         from group_room import group_manager
@@ -431,6 +495,8 @@ class TestPartnerValidation(unittest.TestCase):
         self.assertFalse(result)
 
     def test_partner_by_id(self):
+        from emotional_core.director import director
+        director.clear()
         """Partner must be validated by registered bot ID."""
         from handlers.messages import _is_trusted_partner
         from group_room import group_manager
@@ -451,6 +517,8 @@ if __name__ == '__main__':
 
 class TestPhase11(unittest.IsolatedAsyncioTestCase):
     async def test_database_409_retry_and_fallback(self):
+        from emotional_core.director import director
+        director.clear()
         from database import Database
         db = Database()
         db.connected = True
@@ -467,6 +535,8 @@ class TestPhase11(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.client.insert.call_count, 2)
         
     async def test_database_missing_row_creation(self):
+        from emotional_core.director import director
+        director.clear()
         from database import Database
         db = Database()
         db.connected = True
@@ -479,6 +549,8 @@ class TestPhase11(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.client.insert.call_count, 1)
 
     async def test_group_room_dedupe_and_reservation(self):
+        from emotional_core.director import director
+        director.clear()
         from group_room import group_manager, TriggerState
         room = await group_manager.get_room(123)
         room.triggers[100] = TriggerState()
@@ -497,6 +569,8 @@ class TestPhase11(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(room.transcript[0]['sender_id'], 1234)
 
     def test_readme_contains_migration(self):
+        from emotional_core.director import director
+        director.clear()
         with open('README.md', 'r', encoding='utf-8') as f:
             content = f.read()
         self.assertIn('migrations/001_add_bot_name_to_users.sql', content)
@@ -574,6 +648,8 @@ class TestBotChainIntegration(unittest.IsolatedAsyncioTestCase):
 
 class TestMentionTests(unittest.IsolatedAsyncioTestCase):
     async def test_mentions(self):
+        from emotional_core.director import director
+        director.clear()
         from group_room import group_manager
         from config import Config
         from emotional_core.director import director
@@ -581,16 +657,16 @@ class TestMentionTests(unittest.IsolatedAsyncioTestCase):
         
         # Exact configured username
         Config.NIYATI_BOT_USERNAME = 'NiyatiBotConfigured'
-        plan1 = await director.process_message(chat_id, 10, 'User', 1, 'hey @NiyatiBotConfigured', is_group=True)
+        plan1 = await director.plan_turn(chat_id, 10, 'User', 1, 'hey @NiyatiBotConfigured', is_group=True)
         self.assertIn('niyati', plan1.selected_bots)
         
         # Username from Telegram get_me (Simulate overriding)
         Config.PALAK_BOT_USERNAME = 'PalakRealGetMe'
-        plan2 = await director.process_message(chat_id, 10, 'User', 2, 'yo @PalakRealGetMe whatsup', is_group=True)
+        plan2 = await director.plan_turn(chat_id, 10, 'User', 2, 'yo @PalakRealGetMe whatsup', is_group=True)
         self.assertIn('palak', plan2.selected_bots)
         
         # Direct mention while another human name is present
-        plan3 = await director.process_message(chat_id, 10, 'User', 3, 'hey amit and @NiyatiBotConfigured', is_group=True)
+        plan3 = await director.plan_turn(chat_id, 10, 'User', 3, 'hey amit and @NiyatiBotConfigured', is_group=True)
         self.assertIn('niyati', plan3.selected_bots)
         
         # Test utils is_user_talking_to_others
@@ -628,27 +704,31 @@ class TestProductionFixes(unittest.IsolatedAsyncioTestCase):
 
     async def test_targeting_routing(self):
         from emotional_core.director import director
+        director.clear()
+        from emotional_core.director import director
         chat_id = -100
 
         # "Hello Palak" plans only Palak
-        plan_p = await director.process_message(chat_id, 10, 'User', 1, 'Hello Palak', is_group=True)
+        plan_p = await director.plan_turn(chat_id, 10, 'User', 1, 'Hello Palak', is_group=True)
         self.assertEqual(plan_p.selected_bots, ['palak'])
 
         # "Niyati ghar par kon hai" plans only Niyati
-        plan_n = await director.process_message(chat_id, 10, 'User', 2, 'Niyati ghar par kon hai', is_group=True)
+        plan_n = await director.plan_turn(chat_id, 10, 'User', 2, 'Niyati ghar par kon hai', is_group=True)
         self.assertEqual(plan_n.selected_bots, ['niyati'])
 
         # "tum dono kya kar rahi ho" plans both
-        plan_b = await director.process_message(chat_id, 10, 'User', 3, 'tum dono kya kar rahi ho', is_group=True)
+        plan_b = await director.plan_turn(chat_id, 10, 'User', 3, 'tum dono kya kar rahi ho', is_group=True)
         self.assertCountEqual(plan_b.selected_bots, ['niyati', 'palak'])
 
         # "hello" uses ordinary coordinator behaviour (could be any, but usually 1 or 2)
         import random
         random.seed(123)
-        plan_h = await director.process_message(chat_id, 10, 'User', 4, 'hello', is_group=True)
+        plan_h = await director.plan_turn(chat_id, 10, 'User', 4, 'hello', is_group=True)
         self.assertTrue(len(plan_h.selected_bots) > 0)
 
     async def test_abort_waiters(self):
+        from emotional_core.director import director
+        director.clear()
         chat_id = -100
         room = await self.gm.get_room(chat_id)
         
@@ -695,6 +775,8 @@ class TestProductionFixes(unittest.IsolatedAsyncioTestCase):
             self.fail(f"generate_response raised NameError: {e}")
 
     def test_appraisal_greeting_directed(self):
+        from emotional_core.director import director
+        director.clear()
         from emotional_core.appraisal import AppraisalEngine
         from emotional_core.models import EmotionalInputContext
         
@@ -722,26 +804,30 @@ class TestPhase2A(unittest.IsolatedAsyncioTestCase):
 
     async def test_semantic_routing(self):
         from emotional_core.director import director
+        director.clear()
+        from emotional_core.director import director
         chat_id = -100
 
         # Topic ownership
-        plan1 = await director.process_message(chat_id, 10, 'User', 1, 'Arjun kon hai', is_group=True)
+        plan1 = await director.plan_turn(chat_id, 10, 'User', 1, 'Arjun kon hai', is_group=True)
         self.assertEqual(plan1.selected_bots, ['niyati'])
         
-        plan2 = await director.process_message(chat_id, 10, 'User', 2, 'Bruno kahan hai', is_group=True)
+        plan2 = await director.plan_turn(chat_id, 10, 'User', 2, 'Bruno kahan hai', is_group=True)
         self.assertEqual(plan2.selected_bots, ['palak'])
 
         # Plural
-        plan3 = await director.process_message(chat_id, 10, 'User', 3, 'tum dono kahan se ho', is_group=True)
+        plan3 = await director.plan_turn(chat_id, 10, 'User', 3, 'tum dono kahan se ho', is_group=True)
         self.assertCountEqual(plan3.selected_bots, ['niyati', 'palak'])
 
         # General message defaults to one responder
         import random
         random.seed(123)
-        plan4 = await director.process_message(chat_id, 10, 'User', 4, 'hello', is_group=True)
+        plan4 = await director.plan_turn(chat_id, 10, 'User', 4, 'hello', is_group=True)
         self.assertTrue(len(plan4.selected_bots) > 0)
 
     async def test_leave_request_and_withdrawal(self):
+        from emotional_core.director import director
+        director.clear()
         from emotional_core.models import CharacterRuntimeState, EmotionalInputContext
         from emotional_core.appraisal import AppraisalEngine
         from emotional_core.conversation_policy import ConversationPolicy
@@ -771,6 +857,8 @@ class TestPhase2A(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(decision2.should_respond)
 
     async def test_repeated_hostility(self):
+        from emotional_core.director import director
+        director.clear()
         from emotional_core.models import CharacterRuntimeState, EmotionalInputContext
         from emotional_core.appraisal import AppraisalEngine
         from emotional_core.conversation_policy import ConversationPolicy
@@ -797,6 +885,8 @@ class TestPhase2A(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.dialogue.consecutive_hostility_count, 3)
 
     async def test_fingerprinting_rejection(self):
+        from emotional_core.director import director
+        director.clear()
         from ai_engine import get_ai_engine
         engine = get_ai_engine('niyati')
         recent_fingerprints = ["meri galti thi"]
@@ -812,39 +902,53 @@ class TestPhase2A(unittest.IsolatedAsyncioTestCase):
 class TestPhase2B(unittest.IsolatedAsyncioTestCase):
     async def test_a_arjun_kon_hai(self):
         from emotional_core.director import director
-        plan = await director.process_message(1, 100, "User", 101, "Arjun kon hai", is_group=True)
+        director.clear()
+        from emotional_core.director import director
+        plan = await director.plan_turn(1, 100, "User", 101, "Arjun kon hai", is_group=True)
         self.assertEqual(plan.selected_bots, ["niyati"])
         
     async def test_b_sad_hu_fallback(self):
         from emotional_core.director import director
-        plan = await director.process_message(1, 100, "User", 102, "Main thoda sad hu aaj", is_group=True)
+        director.clear()
+        from emotional_core.director import director
+        plan = await director.plan_turn(1, 100, "User", 102, "Main thoda sad hu aaj", is_group=True)
         self.assertEqual(len(plan.selected_bots), 1)
 
     async def test_c_kya_kr_rahi(self):
         from emotional_core.director import director
-        plan = await director.process_message(1, 100, "User", 103, "Kya kr rahi ho abhi", is_group=True)
+        director.clear()
+        from emotional_core.director import director
+        plan = await director.plan_turn(1, 100, "User", 103, "Kya kr rahi ho abhi", is_group=True)
         self.assertEqual(len(plan.selected_bots), 1)
 
     async def test_d_coreference(self):
         from emotional_core.director import director
-        await director.register_bot_response(1, 100, "niyati", 104, "current_feeling:sad")
-        plan = await director.process_message(1, 100, "User", 105, "kyu", is_group=True)
+        director.clear()
+        from emotional_core.director import director
+        await director.record_turn_outcome(1, 100, "niyati", 104, "current_feeling:sad")
+        plan = await director.plan_turn(1, 100, "User", 105, "kyu", is_group=True)
         self.assertEqual(plan.selected_bots, ["niyati"])
         self.assertEqual(plan.resolved_intent, "ASK_REASON")
 
     async def test_e_correction(self):
         from emotional_core.director import director
-        await director.process_message(1, 100, "User", 106, "Kya kr rahi ho abhi?", is_group=True)
-        plan = await director.process_message(1, 100, "User", 107, "maine toh niyati se pucha", is_group=True)
+        director.clear()
+        from emotional_core.director import director
+        await director.plan_turn(1, 100, "User", 106, "Kya kr rahi ho abhi?", is_group=True)
+        plan = await director.plan_turn(1, 100, "User", 107, "maine toh niyati se pucha", is_group=True)
         self.assertEqual(plan.selected_bots, ["niyati"])
         self.assertEqual(plan.normalized_question, "Kya kr rahi ho abhi?")
 
     async def test_f_dono(self):
         from emotional_core.director import director
-        plan = await director.process_message(1, 100, "User", 108, "tum dono kya kar rahi ho", is_group=True)
+        director.clear()
+        from emotional_core.director import director
+        plan = await director.plan_turn(1, 100, "User", 108, "tum dono kya kar rahi ho", is_group=True)
         self.assertCountEqual(plan.selected_bots, ["niyati", "palak"])
 
     async def test_h_claim_consistency_validator(self):
+        from emotional_core.director import director
+        director.clear()
         from ai_engine import AIEngine
         from emotional_core.models import CharacterClaim
         from datetime import datetime, timezone
@@ -865,3 +969,88 @@ class TestPhase2B(unittest.IsolatedAsyncioTestCase):
             # First one rejected, second one accepted
             self.assertEqual(res, ["main so rahi hu ab"])
 
+
+    async def test_gather_concurrency(self):
+        from emotional_core.director import director
+        director.clear()
+        from emotional_core.director import director
+        import asyncio
+        
+        # 50 tasks trying to process the same message id
+        tasks = [director.plan_turn(1, 100, "User", 109, "Concurrency test", is_group=True) for _ in range(50)]
+        results = await asyncio.gather(*tasks)
+        
+        # Should all be exactly the same TurnPlan object
+        first_plan = results[0]
+        for plan in results[1:]:
+            self.assertIs(plan, first_plan)
+
+    async def test_active_bot_continuation(self):
+        from emotional_core.director import director
+        director.clear()
+        from emotional_core.director import director
+        await director.record_turn_outcome(2, 200, "palak", 201)
+        plan = await director.plan_turn(2, 200, "User", 202, "kya chal raha hai?", is_group=True)
+        self.assertEqual(plan.selected_bots, ["palak"])
+        self.assertEqual(plan.reason, "active_bot_continuation")
+
+    async def test_short_ku_resolves_to_palak(self):
+        from emotional_core.director import director
+        director.clear()
+        from emotional_core.director import director
+        await director.record_turn_outcome(3, 300, "palak", 301)
+        plan = await director.plan_turn(3, 300, "User", 302, "Ku?", is_group=True)
+        self.assertEqual(plan.selected_bots, ["palak"])
+        self.assertEqual(plan.resolved_intent, "ASK_REASON")
+
+    async def test_why_are_you_sleepy_claim_compatibility(self):
+        from emotional_core.director import director
+        director.clear()
+        from ai_engine import AIEngine
+        from emotional_core.models import CharacterClaim
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+        
+        engine = AIEngine()
+        
+        claims = {
+            "current_feeling": CharacterClaim(
+                bot_name="niyati", claim_type="current_feeling", value="sleepy",
+                reason="", source_human_message_id=0, source_bot_message_id=0, created_at=datetime.now(timezone.utc)
+            )
+        }
+        
+        # With patch returning bored with sleep context vs without
+        with patch.object(engine, '_call_gpt', side_effect=["main toh bore ho rahi hu bas", "main soyi nahi thi na raat bhar, isliye bore ho rhi hu ab"]):
+            res = await engine.generate_response(
+                bot_name='niyati', user_id=99, chat_id=1, user_message="why are you sleepy?", user_name="Test", is_group=True,
+                active_claims=claims
+            )
+            # First one rejected for replacing sleepy with bored without transition, second accepted
+            self.assertEqual(res, ["main soyi nahi thi na raat bhar, isliye bore ho rhi hu ab"])
+
+    async def test_jao_so_jao_vs_chali_jao(self):
+        from emotional_core.director import director
+        director.clear()
+        from emotional_core.appraisal import AppraisalEngine
+        from emotional_core.models import EmotionalInputContext
+        
+        ctx1 = EmotionalInputContext(bot_name="niyati", chat_id=1, user_id=1, message_id=1, text="jao so jao", is_group=True)
+        res1 = AppraisalEngine.appraise(ctx1)
+        self.assertEqual(res1.intent, "SUGGEST_SLEEP")
+        
+        ctx2 = EmotionalInputContext(bot_name="niyati", chat_id=1, user_id=1, message_id=2, text="yaha se chali jao", is_group=True)
+        res2 = AppraisalEngine.appraise(ctx2)
+        self.assertEqual(res2.intent, "REQUEST_CHAT_LEAVE")
+
+    async def test_failed_generation_preserving_pending_question(self):
+        from emotional_core.director import director
+        director.clear()
+        from emotional_core.director import director
+        plan = await director.plan_turn(4, 400, "User", 401, "Kaise ho tum?", is_group=True)
+        self.assertEqual(plan.normalized_question, "Kaise ho tum?")
+        
+        # Simulated failed gen, so we don't call record_turn_outcome. Next message:
+        plan2 = await director.plan_turn(4, 400, "User", 402, "maine toh palak se pucha", is_group=True)
+        self.assertEqual(plan2.normalized_question, "Kaise ho tum?")
+        self.assertEqual(plan2.selected_bots, ["palak"])
