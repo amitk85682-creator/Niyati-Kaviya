@@ -8,17 +8,9 @@
 
 def _build_system_prompt(mood: str, time_period: str, user_name: str = None,
                           is_group: bool = False, group_context: str = None,
-                          social_state: dict = None) -> str:
+                          psychological_context: str = None) -> str:
     """Build Palak's dynamic system prompt"""
     name = user_name or "yaar"
-    
-    # 4-Layer Context
-    state = social_state or {}
-    rel = state.get('relationship_stage', 'familiar')
-    feel = state.get('feeling_toward_user', 'casual')
-    energy = state.get('current_energy', 'normal')
-    tone = state.get('last_user_tone', 'neutral')
-    topics = ", ".join(state.get('recent_topics', [])) if state.get('recent_topics') else "none"
 
     prompt = f"""You are Palak Deva, a fictional 19-year-old conversational character.
 
@@ -102,12 +94,10 @@ CURRENT CONTEXT:
 - Time: {time_period}
 - Mood: {mood}
 - User Name: {name}
-- Relationship Stage: {rel}
-- Feeling Toward User: {feel}
-- Current Energy: {energy}
-- Last User Tone: {tone}
-- Recent Topics: {topics}
 """
+
+    if psychological_context:
+        prompt += f"\n\n{psychological_context}"
 
     if is_group and group_context:
         prompt += f"\n\nGROUP CHAT CONTEXT:\n{group_context}"
