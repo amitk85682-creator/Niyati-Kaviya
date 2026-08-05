@@ -169,7 +169,8 @@ class AIEngine:
                                  is_group: bool = False,
                                  reply_to_user: str = None,
                                  psychological_context: str = None,
-                                 recent_responses: List[str] = None) -> List[str]:
+                                 recent_responses: List[str] = None,
+                                 active_claims: Dict = None) -> List[str]:
         """
         Generate AI response for a bot.
         """
@@ -269,7 +270,16 @@ class AIEngine:
                     if len(reply_lower) < 40 and (reply_lower in old_lower or old_lower in reply_lower):
                         invalid = True
                         break
-                        
+            # Claim Consistency Validation
+            if active_claims:
+                for ctype, claim in active_claims.items():
+                    if ctype == "current_feeling" and claim.value == "sleepy":
+                        if "bore" in reply_lower or "boring" in reply_lower:
+                            if not any(w in reply_lower for w in ["ab", "but", "par", "fresh"]):
+                                invalid = True
+                                logger.warning(f"[{bot_name}] Contradicts claim: feeling sleepy but said bored without transition")
+                                break
+                                
             if invalid:
                 logger.warning(f"[{bot_name}] Response rejected. Retrying... (Attempt {attempt+1}/{max_retries})")
                 reply = None

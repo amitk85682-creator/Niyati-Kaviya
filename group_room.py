@@ -13,6 +13,7 @@ from collections import deque
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field
 from config import Config, logger
+from emotional_core.models import TurnPlan
 
 
 @dataclass
@@ -123,9 +124,9 @@ class GroupRoomManager:
 
     async def process_human_message(self, bot_name: str, chat_id: int, message_id: int, 
                                     sender_id: int, sender_name: str, text: str,
-                                    reply_to_bot_name: str = None) -> Tuple[bool, List[str], int]:
+                                    turn_plan: TurnPlan) -> Tuple[bool, List[str], int]:
         """
-        Process an incoming human message.
+        Process an incoming human message using the TurnPlan.
         
         Returns (should_proceed, planned_responders, trigger_message_id).
         """
@@ -149,7 +150,7 @@ class GroupRoomManager:
                 return True, existing_trigger.planned_responders, message_id
 
             # 3. First bot to see this message: create trigger and update session
-            plan = self._decide_responders(room, message_id, sender_id, text, reply_to_bot_name)
+            plan = turn_plan.selected_bots
             new_trigger = TriggerState(planned_responders=plan)
             room.triggers[message_id] = new_trigger
             
@@ -296,72 +297,6 @@ class GroupRoomManager:
         room = await self.get_room(chat_id)
         async with room.lock:
             return list(room.transcript)[-limit:]
-
-    def _decide_responders(self, room: GroupRoomState, message_id: int, sender_id: int, 
-                           text: str, reply_to_bot_name: str = None) -> List[str]:
-        """
-        Deterministic seeded random decision of who responds.
-        Seed: chat_id:message_id:sender_id
-        """
-        # Single bot presence override
-        if room.niyati_present is True and room.palak_present is False:
-            return ['niyati']
-        if room.palak_present is True and room.niyati_present is False:
-            return ['palak']
-            
-        seed_str = f"{room.chat_id}:{message_id}:{sender_id}"
-        seed_int = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
-        rng = random.Random(seed_int)
-        
-        text_lower = text.lower()
-        
-        # Priority 1: Reply-to a specific bot
-        if reply_to_bot_name == 'niyati':
-            return ['niyati']
-        if reply_to_bot_name == 'palak':
-            return ['palak']
-            
-        # Priority 2: Explicit plural ("tum dono", "both")
-        import re
-        if "dono" in text_lower or "both" in text_lower or ("niyati" in text_lower and "palak" in text_lower):
-            res = ['niyati', 'palak']
-            rng.shuffle(res)
-            return res
-            
-        # Priority 3: Direct Mention (@username)
-        if f"@{Config.NIYATI_BOT_USERNAME.lower()}" in text_lower:
-            return ['niyati']
-        if f"@{Config.PALAK_BOT_USERNAME.lower()}" in text_lower:
-            return ['palak']
-            
-        # Priority 4: Explicit character name
-        if bool(re.search(r'\b(niyati)\b', text_lower)):
-            return ['niyati']
-        if bool(re.search(r'\b(palak|palakdevabot)\b', text_lower)):
-            return ['palak']
-            
-        # Priority 5: Active topic/entity owner
-        niyati_entities = ["arjun", "mochi"]
-        palak_entities = ["bruno", "palakcreates"]
-        
-        for entity in niyati_entities:
-            if bool(re.search(fr'\b{entity}\b', text_lower)):
-                return ['niyati']
-                
-        for entity in palak_entities:
-            if bool(re.search(fr'\b{entity}\b', text_lower)):
-                return ['palak']
-                
-        if "delhi" in text_lower and any(w in text_lower for w in ["kaha", "kahan", "rehti", "city", "se ho"]):
-            return ['niyati']
-            
-        if "mumbai" in text_lower and any(w in text_lower for w in ["kaha", "kahan", "rehti", "city", "se ho"]):
-            return ['palak']
-            
-        # Priority 6: General one-bot selection (Exactly one bot)
-        # Avoid both bots responding unprompted to general messages like "hello"
-        roll = rng.random()
-        return ['niyati'] if roll < 0.5 else ['palak']
 
     async def abort_waiters(self, chat_id: int, trigger_message_id: int):
         """Abort a trigger so waiters wake up without fallback."""

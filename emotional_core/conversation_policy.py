@@ -42,7 +42,7 @@ class ConversationPolicy:
             return decision
             
         # C. Leave Request
-        if appraisal.intent == "REQUEST_LEAVE":
+        if appraisal.intent == "REQUEST_CHAT_LEAVE":
             decision.action = ConversationAction.ACKNOWLEDGE
             decision.content_goal = "say 'theek hai' and leave immediately"
             decision.reason = "user_requested_leave"

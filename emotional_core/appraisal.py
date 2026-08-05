@@ -20,6 +20,13 @@ class AppraisalEngine:
         if "arjun" in text:
             res.target_bot = "niyati"
 
+        # Use director's resolved intent if provided (e.g. coreference)
+        if context.turn_plan and context.turn_plan.resolved_intent != "unknown":
+            res.intent = context.turn_plan.resolved_intent
+            res.emotional_weight = 0.2
+            res.requires_answer = True
+            return res
+
         # 2. Intent & Rules
         is_correction_text = "maine niyati se" in text or "tujhse nahi pucha" in text or "maine palak se" in text
         if is_correction_text:
@@ -51,12 +58,21 @@ class AppraisalEngine:
                 res.emotional_weight = 0.6
                 res.social_threat = 0.4
                 
-        elif re.search(r'\b(hi|hello|hey|hii|heyy)\b', text):
+        elif any(w in text for w in ["jao so jao", "good night", "so jao", "go sleep"]):
+            if context.turn_plan and context.turn_plan.active_topic == "current_feeling:sleepy":
+                res.intent = "SUGGEST_SLEEP"
+                res.emotional_weight = 0.3
+            else:
+                res.intent = "greeting"
+                res.emotional_weight = 0.1
+                
+        elif re.search(r'\b(hello|hey|hii|heyy)\b', text):
+            # removed 'hi' from greeting to avoid 'bachhe aese hi hote hain' mismatch
             res.intent = "greeting"
             res.emotional_weight = 0.1
             
         elif any(w in text for w in ["chali jao", "chale jao", "nikalo", "yaha se jao", "leave me alone", "akela chhodo"]):
-            res.intent = "REQUEST_LEAVE"
+            res.intent = "REQUEST_CHAT_LEAVE"
             res.emotional_weight = 0.8
             res.is_serious_insult = True
             
@@ -85,6 +101,10 @@ class AppraisalEngine:
             res.is_question = True
             res.emotional_weight = 0.2
             res.requires_answer = True
+            
+        elif "hi hote hai" in text or "hi hote hain" in text:
+            res.intent = "TOPIC_COMMENT"
+            res.emotional_weight = 0.1
             
         else:
             res.intent = "casual_update"

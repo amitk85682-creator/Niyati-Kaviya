@@ -8,13 +8,17 @@ from .models import (
     AppraisalResult,
     EmotionalInputContext,
     ResponseOutcome,
-    RecentResponse
+    RecentResponse,
+    TurnPlan,
+    ConversationSession,
+    CharacterClaim
 )
 from .state_manager import state_manager, EmotionalStateManager
 from .appraisal import AppraisalEngine
 from .emotion_engine import EmotionEngine
 from .conversation_policy import ConversationPolicy
 from .daily_life import DailyLifeGenerator
+from .director import director, ConversationDirector
 
 __all__ = [
     'MoodState',
@@ -32,5 +36,10 @@ __all__ = [
     'DailyLifeGenerator',
     'EmotionalInputContext',
     'ResponseOutcome',
-    'RecentResponse'
+    'RecentResponse',
+    'TurnPlan',
+    'ConversationSession',
+    'CharacterClaim',
+    'director',
+    'ConversationDirector'
 ]

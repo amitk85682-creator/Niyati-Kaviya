@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field, asdict
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -142,6 +142,7 @@ class CharacterRuntimeState:
     recent_responses: List[RecentResponse] = field(default_factory=list)
     successful_response_count: int = 0
     processed_events: List[str] = field(default_factory=list)
+    claims: Dict[str, 'CharacterClaim'] = field(default_factory=dict)
     last_updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def clamp_all(self):
@@ -169,6 +170,7 @@ class EmotionalInputContext:
     character_already_responded: bool = False
     recent_group_context: List[str] = field(default_factory=list)
     previous_character_action: Optional[str] = None
+    turn_plan: Optional['TurnPlan'] = None
 
 
 @dataclass
@@ -200,3 +202,49 @@ class ConversationDecision:
     max_sentences: int = 1
     allow_emoji: bool = True
     reason: str = ""
+
+@dataclass
+class TurnPlan:
+    chat_id: int
+    human_user_id: int
+    human_message_id: int
+    selected_bots: List[str]
+    primary_bot: Optional[str] = None
+    explicit_target: Optional[str] = None
+    active_bot: Optional[str] = None
+    referenced_bot: Optional[str] = None
+    referenced_message_id: Optional[int] = None
+    active_topic: Optional[str] = None
+    resolved_intent: str = "unknown"
+    reference_type: Optional[str] = None
+    normalized_question: Optional[str] = None
+    reason: str = ""
+    conversation_session_id: str = ""
+
+@dataclass
+class ConversationSession:
+    chat_id: int
+    user_id: int
+    active_bot: Optional[str] = None
+    active_since: Optional[datetime] = None
+    last_human_message_id: Optional[int] = None
+    last_bot_message_id: Optional[int] = None
+    last_bot_name: Optional[str] = None
+    last_topic: Optional[str] = None
+    last_explicit_target: Optional[str] = None
+    pending_question: Optional[str] = None
+    recent_turns: int = 0
+    expires_at: Optional[datetime] = None
+
+@dataclass
+class CharacterClaim:
+    bot_name: str
+    claim_type: str
+    value: str
+    reason: str
+    source_human_message_id: int
+    source_bot_message_id: int
+    created_at: datetime
+    valid_until: Optional[datetime] = None
+    superseded: bool = False
+    confidence: float = 1.0

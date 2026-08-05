@@ -29,7 +29,7 @@ from utils import (
 from emotional_core import (
     state_manager, AppraisalEngine, EmotionEngine, 
     ConversationPolicy, DailyLifeGenerator, EmotionalInputContext,
-    ResponseOutcome, RecentResponse
+    ResponseOutcome, RecentResponse, director
 )
 from datetime import datetime, timezone
 
@@ -326,10 +326,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ════════════════════════════════════════════════════════════════════
         reply_to_user_name = None
         chip_in_delay = 0
+        turn_plan = None
 
         if is_group:
             # Resolve reply-to bot for routing
             reply_to_bot = _resolve_reply_to_bot(message, bot_name)
+            
+            # Use the central ConversationDirector
+            turn_plan = await director.process_message(
+                chat_id=chat.id,
+                user_id=user.id,
+                user_name=user.first_name,
+                message_id=message.message_id,
+                text=user_message,
+                reply_to_bot_name=reply_to_bot,
+                is_group=True
+            )
             
             should_proceed, planned, trigger_message_id = await group_manager.process_human_message(
                 bot_name=bot_name,
@@ -338,7 +350,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sender_id=user.id,
                 sender_name=user.first_name,
                 text=user_message,
-                reply_to_bot_name=reply_to_bot
+                turn_plan=turn_plan
             )
             if not should_proceed:
                 return
@@ -347,14 +359,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db.add_group_message(chat.id, user.first_name, user.id, user_message)
 
             # COORDINATOR DECISION
-            if bot_name not in planned:
+            if bot_name not in turn_plan.selected_bots:
                 logger.debug(f"[{bot_name}] Not selected to respond to {user.first_name}")
                 return
                 
             await db.get_or_create_group(bot_name, chat.id, chat.title)
                 
             # Wait for our turn if we are second
-            await group_manager.wait_for_turn(bot_name, chat.id, planned, trigger_message_id)
+            await group_manager.wait_for_turn(bot_name, chat.id, turn_plan.selected_bots, trigger_message_id)
             
             # Reserve before generating AI response
             reserved = await group_manager.reserve_bot(bot_name, chat.id, trigger_message_id)
@@ -401,8 +413,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=user_message,
                 is_group=is_group,
                 replied_to_bot_name=reply_bot_name,
-                semantic_target_bot=reply_bot_name if reply_bot_name else None,
-                previous_character_action=prev_action
+                semantic_target_bot=turn_plan.explicit_target if turn_plan else (reply_bot_name if reply_bot_name else None),
+                previous_character_action=prev_action,
+                turn_plan=turn_plan
             )
             
             state_manager.apply_decay(s, now)
@@ -463,7 +476,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_group=is_group,
             reply_to_user=reply_to_user_name,
             psychological_context=psych_context,
-            recent_responses=state.dialogue.recent_phrase_fingerprints
+            recent_responses=state.dialogue.recent_phrase_fingerprints,
+            active_claims=state.claims
         )
 
         logger.info(f"[{bot_name}] Got {len(responses)} responses for user {user.id}")
@@ -530,7 +544,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             s.dialogue.recent_phrase_fingerprints.append(resp)
                         if len(s.dialogue.recent_phrase_fingerprints) > 10:
                             s.dialogue.recent_phrase_fingerprints = s.dialogue.recent_phrase_fingerprints[-10:]
+                            
+                        # Extract and save claims
+                        combined_resp = " ".join(responses).lower()
+                        claim_type = None
+                        if any(w in combined_resp for w in ["so rahi", "neend", "sleepy", "sone ja"]):
+                            claim_type = "current_feeling:sleepy"
+                        elif any(w in combined_resp for w in ["kaam kar", "busy", "padhai"]):
+                            claim_type = "current_activity:busy"
+                        elif any(w in combined_resp for w in ["sad", "dukhi", "cry"]):
+                            claim_type = "current_feeling:sad"
+                        elif any(w in combined_resp for w in ["bore", "boring", "pak rahi"]):
+                            claim_type = "current_feeling:bored"
+                            
+                        if claim_type:
+                            from emotional_core.models import CharacterClaim
+                            ctype, cval = claim_type.split(':')
+                            s.claims[ctype] = CharacterClaim(
+                                bot_name=bot_name,
+                                claim_type=ctype,
+                                value=cval,
+                                reason="generated_response",
+                                source_human_message_id=message.message_id,
+                                source_bot_message_id=sent_msg_ids[0],
+                                created_at=now
+                            )
+                            
                     await state_manager.mutate_state(bot_name, chat.id, user.id, fingerprint_mutator)
+                    
+                    # Update Director
+                    combined_resp = " ".join(responses).lower()
+                    claim_type = None
+                    if any(w in combined_resp for w in ["so rahi", "neend", "sleepy", "sone ja"]):
+                        claim_type = "current_feeling:sleepy"
+                    elif "bore" in combined_resp:
+                        claim_type = "current_feeling:bored"
+                        
+                    await director.register_bot_response(chat.id, user.id, bot_name, sent_msg_ids[0], claim_type)
             else:
                 await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.FAILED_SEND)
 
