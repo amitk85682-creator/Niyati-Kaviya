@@ -19,6 +19,11 @@ from config import Config, logger
 from characters import get_character
 from memory import get_memory
 from utils import Mood, TimeAware
+from datetime import datetime, timezone
+from emotional_core import (
+    state_manager, AppraisalEngine, EmotionEngine, 
+    ConversationPolicy, DailyLifeGenerator
+)
 
 
 BANNED_GENERIC_PHRASES = [
@@ -194,30 +199,78 @@ class AIEngine:
                 msg['content'] for msg in context_msgs[-8:]
             )
             
-        # Generate simple social state heuristically
-        energies = ["low", "neutral", "high", "tired", "hyper"]
-        tones = ["neutral", "teasing", "serious", "casual"]
+        # ==========================================
+        # EMOTIONAL CORE PHASE 1 INTEGRATION
+        # ==========================================
+        now = datetime.now(timezone.utc)
         
-        hour = TimeAware.get_ist_time().hour
-        r_seed = user_id + hour
-        rng = random.Random(r_seed)
+        # 1. Load state
+        state = await state_manager.get_state(bot_name, chat_id, user_id)
         
-        social_state = {
-            "relationship_stage": "familiar" if len(context_msgs) > 3 else "new",
-            "feeling_toward_user": "casual",
-            "current_energy": rng.choice(energies),
-            "last_user_tone": rng.choice(tones),
-            "recent_topics": []
-        }
+        # 2. Apply time decay
+        state_manager.apply_decay(state, now)
+        
+        # 3. Generate Daily Life (if empty or new day)
+        date_str = now.strftime("%Y-%m-%d")
+        if state.daily_life.date != date_str:
+            state.daily_life = DailyLifeGenerator.generate(bot_name, date_str)
+            
+        # 4. Appraise message
+        # Convert reply_to_user to bot target if it matches a known bot
+        r_bot = reply_to_user if reply_to_user in ['niyati', 'palak'] else None
+        appraisal = AppraisalEngine.appraise(
+            message_text=user_message, 
+            reply_to_bot=r_bot,
+            relationship=state.relationship
+        )
+        
+        # 5. Update emotion and relationship
+        EmotionEngine.apply_appraisal(state, appraisal)
+        
+        # 6. Select conversational action
+        decision = ConversationPolicy.decide_action(state, appraisal, is_group)
+        
+        # 7. Save state
+        await state_manager.save_state(state)
+        
+        # Logging
+        logger.info(f"[Emotion] bot={bot_name} user={user_id} intent={appraisal.intent} action={decision.action.name}")
+        if not decision.should_respond:
+            logger.info(f"[Policy] bot={bot_name} respond=False reason={decision.reason}")
+            return []
+            
+        # 8. Build psychological context object for the AI prompt
+        def label(val):
+            if val < 0.33: return "low"
+            if val < 0.66: return "medium"
+            return "high"
+            
+        psych_context = (
+            f"Current psychological state:\n"
+            f"- energy: {label(state.mood.energy)}\n"
+            f"- playfulness: {label(state.mood.playfulness)}\n"
+            f"- irritation: {label(state.mood.irritation)}\n"
+            f"- embarrassment: {label(state.mood.embarrassment)}\n"
+            f"- relationship stage: {state.relationship.stage}\n"
+            f"- trust: {label(state.relationship.trust)}\n"
+            f"- message interpretation: {appraisal.intent}\n"
+            f"- selected action: {decision.action.name}\n"
+            f"- content goal: {decision.content_goal}\n"
+            f"- current activity: {state.daily_life.current_activity} at {state.daily_life.location}\n"
+            f"- active concern: {state.daily_life.active_concern}\n"
+            f"- avoid mentioning: {'college, Bruno, painting' if bot_name == 'palak' else 'hobbies randomly'}\n"
+            f"- maximum response length: {decision.max_sentences} sentence(s)\n"
+            f"- emoji allowed: {'yes' if decision.allow_emoji else 'no'}\n"
+        )
 
-        # 5. Build system prompt using character's prompt builder
+        # 9. Build system prompt using character's prompt builder
         system_prompt = character['build_system_prompt'](
             mood=mood,
             time_period=time_period,
             user_name=user_name,
             is_group=is_group,
             group_context=group_context_str,
-            social_state=social_state
+            psychological_context=psych_context
         )
         
         other_bot = 'niyati' if bot_name == 'palak' else 'palak'
