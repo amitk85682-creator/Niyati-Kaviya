@@ -77,30 +77,36 @@ class MemoryManager:
         shared = await group_manager.get_transcript(chat_id, limit=15)
         
         context = []
+        last_human_msg = None
+        bots_responded = set()
+        
         for msg in shared:
             sender = msg.get('sender_name', 'Someone')
             content = msg.get('content', '')
             is_bot = msg.get('is_bot', False)
             msg_bot_name = msg.get('bot_name', None)
             
-            # If this message is from THIS bot, mark as assistant
-            if is_bot and msg_bot_name == self.bot_name:
-                context.append({
-                    'role': 'assistant',
-                    'content': content
-                })
-            # If from the OTHER bot, show as a named participant
-            elif is_bot:
+            if not is_bot:
+                # If there was a previous human message, add <no response> for missing bots
+                if last_human_msg is not None:
+                    if 'niyati' not in bots_responded:
+                        context.append({'role': 'user', 'content': 'BOT | Niyati | <no response>'})
+                    if 'palak' not in bots_responded:
+                        context.append({'role': 'user', 'content': 'BOT | Palak | <no response>'})
+                
+                last_human_msg = msg
+                bots_responded = set()
                 context.append({
                     'role': 'user',
-                    'content': f"[{sender}]: {content}"
+                    'content': f"HUMAN | {sender} | {content}"
                 })
-            # User message
             else:
-                context.append({
-                    'role': 'user',
-                    'content': f"[{sender}]: {content}"
-                })
+                if msg_bot_name:
+                    bots_responded.add(msg_bot_name)
+                    context.append({
+                        'role': 'user',
+                        'content': f"BOT | {msg_bot_name.capitalize()} | {content}"
+                    })
         
         return context
 

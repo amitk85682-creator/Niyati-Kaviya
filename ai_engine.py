@@ -19,7 +19,22 @@ from config import Config, logger
 from characters import get_character
 from memory import get_memory
 from utils import Mood, TimeAware
+from datetime import datetime, timezone
+from emotional_core import (
+    state_manager, AppraisalEngine, EmotionEngine, 
+    ConversationPolicy, DailyLifeGenerator
+)
 
+
+BANNED_GENERIC_PHRASES = [
+    "acha that's good",
+    "main sunne ke liye hu",
+    "bas college ka kaam",
+    "classes attend karke notes",
+    "painting karne ki soch rahi",
+    "ghar pe araam kar rahi",
+    "honestly abhi kuch clear nahi",
+]
 
 class AIEngine:
     """
@@ -183,15 +198,83 @@ class AIEngine:
             group_context_str = "\n".join(
                 msg['content'] for msg in context_msgs[-8:]
             )
+            
+        # ==========================================
+        # EMOTIONAL CORE PHASE 1 INTEGRATION
+        # ==========================================
+        now = datetime.now(timezone.utc)
+        
+        # 1. Load state
+        state = await state_manager.get_state(bot_name, chat_id, user_id)
+        
+        # 2. Apply time decay
+        state_manager.apply_decay(state, now)
+        
+        # 3. Generate Daily Life (if empty or new day)
+        date_str = now.strftime("%Y-%m-%d")
+        if state.daily_life.date != date_str:
+            state.daily_life = DailyLifeGenerator.generate(bot_name, date_str)
+            
+        # 4. Appraise message
+        # Convert reply_to_user to bot target if it matches a known bot
+        r_bot = reply_to_user if reply_to_user in ['niyati', 'palak'] else None
+        appraisal = AppraisalEngine.appraise(
+            message_text=user_message, 
+            reply_to_bot=r_bot,
+            relationship=state.relationship
+        )
+        
+        # 5. Update emotion and relationship
+        EmotionEngine.apply_appraisal(state, appraisal)
+        
+        # 6. Select conversational action
+        decision = ConversationPolicy.decide_action(state, appraisal, is_group)
+        
+        # 7. Save state
+        await state_manager.save_state(state)
+        
+        # Logging
+        logger.info(f"[Emotion] bot={bot_name} user={user_id} intent={appraisal.intent} action={decision.action.name}")
+        if not decision.should_respond:
+            logger.info(f"[Policy] bot={bot_name} respond=False reason={decision.reason}")
+            return []
+            
+        # 8. Build psychological context object for the AI prompt
+        def label(val):
+            if val < 0.33: return "low"
+            if val < 0.66: return "medium"
+            return "high"
+            
+        psych_context = (
+            f"Current psychological state:\n"
+            f"- energy: {label(state.mood.energy)}\n"
+            f"- playfulness: {label(state.mood.playfulness)}\n"
+            f"- irritation: {label(state.mood.irritation)}\n"
+            f"- embarrassment: {label(state.mood.embarrassment)}\n"
+            f"- relationship stage: {state.relationship.stage}\n"
+            f"- trust: {label(state.relationship.trust)}\n"
+            f"- message interpretation: {appraisal.intent}\n"
+            f"- selected action: {decision.action.name}\n"
+            f"- content goal: {decision.content_goal}\n"
+            f"- current activity: {state.daily_life.current_activity} at {state.daily_life.location}\n"
+            f"- active concern: {state.daily_life.active_concern}\n"
+            f"- avoid mentioning: {'college, Bruno, painting' if bot_name == 'palak' else 'hobbies randomly'}\n"
+            f"- maximum response length: {decision.max_sentences} sentence(s)\n"
+            f"- emoji allowed: {'yes' if decision.allow_emoji else 'no'}\n"
+        )
 
-        # 5. Build system prompt using character's prompt builder
+        # 9. Build system prompt using character's prompt builder
         system_prompt = character['build_system_prompt'](
             mood=mood,
             time_period=time_period,
             user_name=user_name,
             is_group=is_group,
-            group_context=group_context_str
+            group_context=group_context_str,
+            psychological_context=psych_context
         )
+        
+        other_bot = 'niyati' if bot_name == 'palak' else 'palak'
+        system_prompt += f"\n\nYou are {bot_name.upper()}.\nRespond only as {bot_name.upper()}.\nNever reproduce role labels.\nNever answer a message assigned to {other_bot.upper()}."
 
         # 6. Build messages for AI
         messages = [{"role": "system", "content": system_prompt}]
@@ -208,7 +291,7 @@ class AIEngine:
         else:
             messages.append({"role": "user", "content": user_message})
 
-        # 7. Call AI (with repetition guard)
+        # 7. Call AI (with repetition guard and strict validation)
         max_retries = 2
         reply = None
         for attempt in range(max_retries + 1):
@@ -216,29 +299,42 @@ class AIEngine:
             if not reply or reply.upper() == "IGNORE":
                 break
                 
-            # Repetition guard (groups only to avoid getting stuck in 1-on-1 loops if user repeats)
+            invalid = False
+            reply_lower = reply.lower()
+            
+            # Check banned phrases
+            if any(p in reply_lower for p in BANNED_GENERIC_PHRASES):
+                invalid = True
+                
+            # Check length (reject excessively long messages)
+            if len(reply.split('\n')) > 4 or len(reply) > 300:
+                invalid = True
+                
+            # Check cross-bot speaking (e.g., Niyati:, Palak:, [Niyati], etc)
+            if f"{other_bot.capitalize()}:" in reply or f"[{other_bot.capitalize()}]" in reply:
+                invalid = True
+                
+            # Repetition guard 
             if is_group:
-                too_similar = False
-                reply_lower = reply.lower()
                 for old_reply in self.recent_responses:
                     old_lower = old_reply.lower()
                     ratio = SequenceMatcher(None, reply_lower, old_lower).ratio()
                     if ratio > 0.75:
-                        too_similar = True
+                        invalid = True
                         break
                     # Catch generic short repeats
                     if len(reply_lower) < 40 and (reply_lower in old_lower or old_lower in reply_lower):
-                        too_similar = True
+                        invalid = True
                         break
                 
-                if too_similar:
-                    logger.warning(f"[{bot_name}] Repetition guard triggered. Retrying... (Attempt {attempt+1}/{max_retries})")
-                    reply = None
-                    # Add a random variation instruction to force a different response
-                    messages.append({"role": "system", "content": "The previous response was too similar to a recent message. Be creative and provide a completely different response."})
-                    continue
+            if invalid:
+                logger.warning(f"[{bot_name}] Response rejected. Retrying... (Attempt {attempt+1}/{max_retries})")
+                reply = None
+                # Add a random variation instruction to force a different response
+                messages.append({"role": "system", "content": "The previous response was invalid (either too generic, too long, used wrong character, or repetitive). Be more natural, very short, and follow the rules."})
+                continue
             
-            # If we reached here, it's either not a group or not a repetition
+            # If we reached here, valid!
             if is_group and reply:
                 self.recent_responses.append(reply)
             break
