@@ -203,12 +203,12 @@ class ConversationDecision:
     allow_emoji: bool = True
     reason: str = ""
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class TurnPlan:
     chat_id: int
     human_user_id: int
     human_message_id: int
-    selected_bots: List[str]
+    selected_bots: tuple[str, ...]
     primary_bot: Optional[str] = None
     explicit_target: Optional[str] = None
     active_bot: Optional[str] = None
@@ -220,6 +220,7 @@ class TurnPlan:
     normalized_question: Optional[str] = None
     reason: str = ""
     conversation_session_id: str = ""
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 @dataclass
 class ConversationSession:
@@ -235,6 +236,7 @@ class ConversationSession:
     pending_question: Optional[str] = None
     recent_turns: int = 0
     expires_at: Optional[datetime] = None
+    processed_outcomes: set[tuple[int, str]] = field(default_factory=set)
 
 @dataclass
 class CharacterClaim:

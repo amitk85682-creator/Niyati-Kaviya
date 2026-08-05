@@ -536,65 +536,77 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     action=decision.action,
                     created_at=now
                 )
-                await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.SUCCESS, recent_resp)
                 
                 if is_group:
-                    def fingerprint_mutator(s):
-                        for resp in responses:
-                            s.dialogue.recent_phrase_fingerprints.append(resp)
-                        if len(s.dialogue.recent_phrase_fingerprints) > 10:
-                            s.dialogue.recent_phrase_fingerprints = s.dialogue.recent_phrase_fingerprints[-10:]
-                            
-                        # Extract and save claims
-                        combined_resp = " ".join(responses).lower()
-                        claim_type = None
-                        cval = None
-                        confidence = 1.0
-                        
-                        # Skip extraction if it's a question about the claim
-                        if "kya main" in combined_resp and "?" in combined_resp:
-                            pass
-                        elif any(w in combined_resp for w in ["so rahi", "neend", "sleepy", "sone ja"]):
-                            if "neend nahi" in combined_resp or "not sleepy" in combined_resp:
-                                pass
-                            else:
-                                claim_type = "current_feeling"
-                                cval = "sleepy"
-                                if "shayad" in combined_resp or "maybe" in combined_resp or "thoda" in combined_resp:
-                                    confidence = 0.5
-                        elif any(w in combined_resp for w in ["kaam kar", "busy", "padhai"]):
-                            if "free" in combined_resp or "nahi kar" in combined_resp:
-                                pass
-                            else:
-                                claim_type = "current_activity"
-                                cval = "busy"
-                        elif any(w in combined_resp for w in ["sad", "dukhi", "cry", "rota"]):
-                            claim_type = "current_feeling"
-                            cval = "sad"
-                        elif any(w in combined_resp for w in ["bore", "boring", "pak rahi"]):
-                            claim_type = "current_feeling"
-                            cval = "bored"
-                            
-                        if claim_type and cval:
-                            from emotional_core.models import CharacterClaim
-                            from datetime import timedelta
-                            s.claims[claim_type] = CharacterClaim(
-                                bot_name=bot_name,
-                                claim_type=claim_type,
-                                value=cval,
-                                reason="generated_response",
-                                source_human_message_id=message.message_id,
-                                source_bot_message_id=sent_msg_ids[0],
-                                created_at=now,
-                                valid_until=now + timedelta(hours=1),
-                                confidence=confidence,
-                                superseded=False
-                            )
-                            
-                    await state_manager.mutate_state(bot_name, chat.id, user.id, fingerprint_mutator)
+                    # Pre-calculate claims for director
+                    combined_resp = " ".join(responses).lower()
+                    claim_type = None
+                    cval = None
+                    confidence = 1.0
                     
-                    # Update Director
-                    await director.record_turn_outcome(chat.id, user.id, bot_name, sent_msg_ids[0], claim_type)
+                    if "kya main" in combined_resp and "?" in combined_resp:
+                        pass
+                    elif any(w in combined_resp for w in ["so rahi", "neend", "sleepy", "sone ja"]):
+                        if "neend nahi" in combined_resp or "not sleepy" in combined_resp:
+                            pass
+                        else:
+                            claim_type = "current_feeling"
+                            cval = "sleepy"
+                            if "shayad" in combined_resp or "maybe" in combined_resp or "thoda" in combined_resp:
+                                confidence = 0.5
+                    elif any(w in combined_resp for w in ["kaam kar", "busy", "padhai"]):
+                        if "free" in combined_resp or "nahi kar" in combined_resp:
+                            pass
+                        else:
+                            claim_type = "current_activity"
+                            cval = "busy"
+                    elif any(w in combined_resp for w in ["sad", "dukhi", "cry", "rota"]):
+                        claim_type = "current_feeling"
+                        cval = "sad"
+                    elif any(w in combined_resp for w in ["bore", "boring", "pak rahi"]):
+                        claim_type = "current_feeling"
+                        cval = "bored"
+
+                    # Execute exact-once update
+                    if await director.record_turn_outcome(
+                        chat_id=chat.id, 
+                        human_user_id=user.id, 
+                        human_message_id=message.message_id,
+                        conversation_session_id=turn_plan.conversation_session_id if turn_plan else "",
+                        responding_bot=bot_name,
+                        outcome=ResponseOutcome.SUCCESS,
+                        sent_bot_message_ids=tuple(sent_msg_ids),
+                        response_text=combined_resp,
+                        claim_type=claim_type
+                    ):
+                        # Safely mutate local state only once
+                        await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.SUCCESS, recent_resp)
+                        
+                        def fingerprint_mutator(s):
+                            for resp in responses:
+                                s.dialogue.recent_phrase_fingerprints.append(resp)
+                            if len(s.dialogue.recent_phrase_fingerprints) > 10:
+                                s.dialogue.recent_phrase_fingerprints = s.dialogue.recent_phrase_fingerprints[-10:]
+                                
+                            if claim_type and cval:
+                                from emotional_core.models import CharacterClaim
+                                from datetime import timedelta
+                                s.claims[claim_type] = CharacterClaim(
+                                    bot_name=bot_name,
+                                    claim_type=claim_type,
+                                    value=cval,
+                                    reason="generated_response",
+                                    source_human_message_id=message.message_id,
+                                    source_bot_message_id=sent_msg_ids[0],
+                                    created_at=now,
+                                    valid_until=now + timedelta(hours=1),
+                                    confidence=confidence,
+                                    superseded=False
+                                )
+                        await state_manager.mutate_state(bot_name, chat.id, user.id, fingerprint_mutator)
+                else:
+                    # Private chat bypasses director exact-once
+                    await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.SUCCESS, recent_resp)
             else:
                 await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.FAILED_SEND)
 

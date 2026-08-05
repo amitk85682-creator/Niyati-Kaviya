@@ -22,9 +22,22 @@ class ConversationDirector:
         return (chat_id, user_id)
         
     def _cleanup_expired(self, now: datetime):
+        # Clean sessions
         expired = [k for k, s in self._sessions.items() if s.expires_at and now > s.expires_at]
         for k in expired:
             del self._sessions[k]
+            
+        # Clean expired TurnPlans (older than 20 mins)
+        cutoff = now - timedelta(minutes=20)
+        expired_plans = [k for k, p in self._turn_plans.items() if p.created_at < cutoff]
+        for k in expired_plans:
+            del self._turn_plans[k]
+            
+        # Hard cap (MAX 1000)
+        if len(self._turn_plans) > 1000:
+            sorted_plans = sorted(self._turn_plans.items(), key=lambda item: item[1].created_at)
+            for k, p in sorted_plans[:len(self._turn_plans)-1000]:
+                del self._turn_plans[k]
 
     def clear(self):
         self._sessions.clear()
@@ -129,9 +142,9 @@ class ConversationDirector:
 
             # --- Determine Selection ---
             if explicit_target == "both":
-                selected_bots = ["niyati", "palak"]
+                selected_bots = ("niyati", "palak")
             else:
-                selected_bots = [explicit_target]
+                selected_bots = (explicit_target,)
 
             # --- Pre-Update Session (Plan only, do not save claims or last bot message yet) ---
             if "?" in text or any(w in text_lower.split() for w in ["kya", "kaise", "kyu", "kon", "kab"]):
@@ -159,30 +172,56 @@ class ConversationDirector:
                 conversation_session_id=f"{chat_id}_{user_id}_{session.active_since.timestamp() if session.active_since else now.timestamp()}"
             )
             self._turn_plans[plan_key] = plan
-            
-            # Keep map small
-            if len(self._turn_plans) > 1000:
-                keys_to_delete = list(self._turn_plans.keys())[:100]
-                for k in keys_to_delete:
-                    del self._turn_plans[k]
-                    
             return plan
 
-    async def record_turn_outcome(self, chat_id: int, user_id: int, bot_name: str, message_id: int, claim_type: Optional[str] = None):
+    async def record_turn_outcome(self, chat_id: int, human_user_id: int, human_message_id: int, 
+                                  conversation_session_id: str, responding_bot: str, 
+                                  outcome: 'ResponseOutcome', sent_bot_message_ids: tuple[int, ...], 
+                                  response_text: str, claim_type: Optional[str] = None) -> bool:
         async with self._lock:
-            now = datetime.now(timezone.utc)
-            key = self._get_session_key(chat_id, user_id)
+            plan_key = (chat_id, human_message_id)
+            if plan_key not in self._turn_plans:
+                return False
+                
+            plan = self._turn_plans[plan_key]
+            
+            if responding_bot not in plan.selected_bots:
+                return False
+                
+            if plan.conversation_session_id != conversation_session_id:
+                return False
+                
+            key = self._get_session_key(chat_id, human_user_id)
             if key not in self._sessions:
-                self._sessions[key] = ConversationSession(chat_id=chat_id, user_id=user_id)
+                return False
+                
             session = self._sessions[key]
-            session.active_bot = bot_name
-            session.active_since = session.active_since or now
-            session.last_bot_name = bot_name
-            session.last_bot_message_id = message_id
-            session.recent_turns += 1
-            session.expires_at = now + timedelta(minutes=10)
-            if claim_type:
-                session.last_topic = claim_type
+            
+            # Stale check
+            if session.last_human_message_id and human_message_id < session.last_human_message_id:
+                # But what if the older human message actually completes after a newer one? 
+                # We should reject it to not overwrite the active bot of the newer one.
+                return False
+                
+            outcome_key = (human_message_id, responding_bot)
+            if outcome_key in session.processed_outcomes:
+                return False
+                
+            session.processed_outcomes.add(outcome_key)
+            
+            if outcome.name == "SUCCESS":
+                now = datetime.now(timezone.utc)
+                session.active_bot = responding_bot
+                session.active_since = session.active_since or now
+                session.last_bot_name = responding_bot
+                if sent_bot_message_ids:
+                    session.last_bot_message_id = sent_bot_message_ids[0]
+                session.recent_turns += 1
+                session.expires_at = now + timedelta(minutes=20)
+                if claim_type:
+                    session.last_topic = claim_type
+                
+            return True
 
 # Singleton
 director = ConversationDirector()
