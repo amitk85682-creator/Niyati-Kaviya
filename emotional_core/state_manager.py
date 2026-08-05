@@ -1,8 +1,8 @@
 import asyncio
 import copy
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, Callable
 from datetime import datetime, timezone
-from .models import CharacterRuntimeState, clamp, ConversationAction
+from .models import CharacterRuntimeState, clamp, ConversationAction, ResponseOutcome, RecentResponse
 from .profiles import get_character_traits
 
 class EmotionalStateManager:
@@ -30,16 +30,42 @@ class EmotionalStateManager:
             state.clamp_all()
             state.last_updated_at = datetime.now(timezone.utc)
             self._states[key] = copy.deepcopy(state)
+
+    async def mutate_state(self, bot_name: str, chat_id: int, user_id: int, mutator: Callable[[CharacterRuntimeState], None]) -> CharacterRuntimeState:
+        key = (bot_name.lower(), chat_id, user_id)
+        async with self._lock:
+            if key not in self._states:
+                self._states[key] = CharacterRuntimeState(
+                    bot_name=bot_name.lower(),
+                    chat_id=chat_id,
+                    user_id=user_id
+                )
             
-    async def record_response_outcome(self, bot_name: str, chat_id: int, user_id: int, success: bool, action: ConversationAction):
+            # Deepcopy to isolate changes
+            state_copy = copy.deepcopy(self._states[key])
+            
+            # Apply mutations inside the lock
+            mutator(state_copy)
+            
+            # Validate and clamp
+            state_copy.clamp_all()
+            state_copy.last_updated_at = datetime.now(timezone.utc)
+            
+            # Save and return a fresh deepcopy to the caller
+            self._states[key] = copy.deepcopy(state_copy)
+            return copy.deepcopy(state_copy)
+            
+    async def record_response_outcome(self, bot_name: str, chat_id: int, user_id: int, outcome: ResponseOutcome, response_meta: Optional[RecentResponse] = None):
         key = (bot_name.lower(), chat_id, user_id)
         async with self._lock:
             if key in self._states:
                 state = self._states[key]
-                if success:
-                    state.recent_actions.append(action.name)
-                    if len(state.recent_actions) > 10:
-                        state.recent_actions = state.recent_actions[-10:]
+                if outcome == ResponseOutcome.SUCCESS:
+                    state.successful_response_count += 1
+                    if response_meta:
+                        state.recent_responses.append(response_meta)
+                        if len(state.recent_responses) > 10:
+                            state.recent_responses = state.recent_responses[-10:]
             
     async def reset_state(self, bot_name: str, chat_id: int, user_id: int):
         key = (bot_name.lower(), chat_id, user_id)

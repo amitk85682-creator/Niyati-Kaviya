@@ -1,19 +1,27 @@
-from .models import CharacterRuntimeState, AppraisalResult, ConversationDecision, ConversationAction
+from .models import CharacterRuntimeState, AppraisalResult, ConversationDecision, ConversationAction, EmotionalInputContext
 
 class ConversationPolicy:
     @staticmethod
-    def decide_action(state: CharacterRuntimeState, appraisal: AppraisalResult, is_group: bool) -> ConversationDecision:
+    def decide_action(state: CharacterRuntimeState, appraisal: AppraisalResult, is_group: bool, context: EmotionalInputContext = None) -> ConversationDecision:
         decision = ConversationDecision(action=ConversationAction.ANSWER, should_respond=True)
         
-        # A. User says "maine Niyati se pucha tha" after Palak interrupted
-        # This takes precedence over staying silent when addressed to the other bot
-        repair_event = next((e for e in state.unresolved_events if e.type == "repair_interruption" and not e.resolved), None)
-        if appraisal.is_correction and repair_event:
-            decision.action = ConversationAction.REPAIR_MISTAKE
-            decision.content_goal = "briefly admit interruption, do not defend or blame the user"
-            decision.reason = "repairing_interruption"
-            repair_event.resolved = True
-            return decision
+        if appraisal.is_correction and context:
+            repair_event = next((e for e in state.unresolved_events if e.type == "repair_interruption" and not e.resolved), None)
+            
+            is_direct_reply = (context.replied_to_bot_name == state.bot_name)
+            
+            recent_resp = state.recent_responses[-1] if state.recent_responses else None
+            is_recent_interrupter = False
+            if recent_resp and recent_resp.responding_bot == state.bot_name and recent_resp.source_target_bot and recent_resp.source_target_bot != state.bot_name:
+                is_recent_interrupter = True
+                
+            if is_direct_reply or is_recent_interrupter or repair_event:
+                decision.action = ConversationAction.REPAIR_MISTAKE
+                decision.content_goal = "briefly admit interruption, do not defend or blame the user"
+                decision.reason = "repairing_interruption"
+                if repair_event:
+                    repair_event.resolved = True
+                return decision
             
         # B. Message directed to another bot
         if appraisal.target_bot and appraisal.target_bot != state.bot_name:

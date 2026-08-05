@@ -17,6 +17,25 @@ class ConversationAction(Enum):
     STAY_SILENT = "STAY_SILENT"
 
 
+class ResponseOutcome(Enum):
+    SUCCESS = "SUCCESS"
+    FAILED_GENERATION = "FAILED_GENERATION"
+    FAILED_SEND = "FAILED_SEND"
+    PARTIAL_SEND = "PARTIAL_SEND"
+    SUPPRESSED = "SUPPRESSED"
+
+
+@dataclass
+class RecentResponse:
+    responding_bot: str
+    user_id: int
+    source_human_message_id: int
+    source_target_bot: Optional[str]
+    sent_bot_message_id: int
+    action: ConversationAction
+    created_at: datetime
+
+
 def clamp(value: float, min_val: float = 0.0, max_val: float = 1.0) -> float:
     return max(min_val, min(max_val, value))
 
@@ -104,7 +123,9 @@ class CharacterRuntimeState:
     relationship: RelationshipState = field(default_factory=RelationshipState)
     daily_life: DailyLifeState = field(default_factory=DailyLifeState)
     unresolved_events: List[UnresolvedEvent] = field(default_factory=list)
-    recent_actions: List[str] = field(default_factory=list)
+    recent_responses: List[RecentResponse] = field(default_factory=list)
+    successful_response_count: int = 0
+    processed_events: List[str] = field(default_factory=list)
     last_updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def clamp_all(self):

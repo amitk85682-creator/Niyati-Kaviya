@@ -5,6 +5,14 @@ from .profiles import get_character_traits
 class EmotionEngine:
     @staticmethod
     def apply_appraisal(state: CharacterRuntimeState, appraisal: AppraisalResult, message_id: int):
+        event_key = f"appraisal_{message_id}"
+        if event_key in state.processed_events:
+            return
+            
+        state.processed_events.append(event_key)
+        if len(state.processed_events) > 50:
+            state.processed_events = state.processed_events[-50:]
+            
         traits = get_character_traits(state.bot_name)
         
         # 1. Update relationship based on general interaction

@@ -28,7 +28,8 @@ from utils import (
 )
 from emotional_core import (
     state_manager, AppraisalEngine, EmotionEngine, 
-    ConversationPolicy, DailyLifeGenerator, EmotionalInputContext
+    ConversationPolicy, DailyLifeGenerator, EmotionalInputContext,
+    ResponseOutcome, RecentResponse
 )
 from datetime import datetime, timezone
 
@@ -384,40 +385,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # EMOTIONAL CORE ORCHESTRATION
         # ════════════════════════════════════════════════════════════════════
         now = datetime.now(timezone.utc)
-        state = await state_manager.get_state(bot_name, chat.id, user.id)
-        prev_action = state.recent_actions[-1] if state.recent_actions else None
-        
         reply_bot_name = _resolve_reply_to_bot(message, bot_name)
         
-        input_context = EmotionalInputContext(
-            bot_name=bot_name,
-            chat_id=chat.id,
-            user_id=user.id,
-            message_id=message.message_id,
-            text=user_message,
-            is_group=is_group,
-            replied_to_bot_name=reply_bot_name,
-            semantic_target_bot=reply_bot_name if reply_bot_name else None,
-            previous_character_action=prev_action
-        )
+        appraisal_ref = {}
+        decision_ref = {}
         
-        state_manager.apply_decay(state, now)
-        
-        date_str = now.strftime("%Y-%m-%d")
-        if state.daily_life.date != date_str:
-            state.daily_life = DailyLifeGenerator.generate(bot_name, date_str)
+        def state_mutator(s):
+            prev_action = s.recent_responses[-1].action.name if s.recent_responses else None
             
-        appraisal = AppraisalEngine.appraise(input_context, state.relationship)
-        EmotionEngine.apply_appraisal(state, appraisal, message.message_id)
-        decision = ConversationPolicy.decide_action(state, appraisal, is_group)
-        
-        await state_manager.save_state(state)
+            input_context = EmotionalInputContext(
+                bot_name=bot_name,
+                chat_id=chat.id,
+                user_id=user.id,
+                message_id=message.message_id,
+                text=user_message,
+                is_group=is_group,
+                replied_to_bot_name=reply_bot_name,
+                semantic_target_bot=reply_bot_name if reply_bot_name else None,
+                previous_character_action=prev_action
+            )
+            
+            state_manager.apply_decay(s, now)
+            
+            date_str = now.strftime("%Y-%m-%d")
+            if s.daily_life.date != date_str:
+                s.daily_life = DailyLifeGenerator.generate(bot_name, date_str)
+                
+            appraisal = AppraisalEngine.appraise(input_context, s.relationship)
+            EmotionEngine.apply_appraisal(s, appraisal, message.message_id)
+            decision = ConversationPolicy.decide_action(s, appraisal, is_group, context=input_context)
+            
+            appraisal_ref['value'] = appraisal
+            decision_ref['value'] = decision
+
+        state = await state_manager.mutate_state(bot_name, chat.id, user.id, state_mutator)
+        appraisal = appraisal_ref['value']
+        decision = decision_ref['value']
         
         logger.info(f"[Emotion] bot={bot_name} user={user.id} intent={appraisal.intent} action={decision.action.name}")
         
         if not decision.should_respond:
             logger.info(f"[Policy] bot={bot_name} respond=False reason={decision.reason}")
-            await state_manager.record_response_outcome(bot_name, chat.id, user.id, True, decision.action)
+            await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.SUPPRESSED)
             if is_group and 'trigger_message_id' in locals():
                 await group_manager.release_bot(bot_name, chat.id, trigger_message_id)
             return
@@ -502,7 +511,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 logger.info(f"[{bot_name}] Saved response to shared group memory")
 
-            await state_manager.record_response_outcome(bot_name, chat.id, user.id, True, decision.action)
+            if sent_msg_ids:
+                recent_resp = RecentResponse(
+                    responding_bot=bot_name,
+                    user_id=user.id,
+                    source_human_message_id=message.message_id,
+                    source_target_bot=appraisal.target_bot,
+                    sent_bot_message_id=sent_msg_ids[0],
+                    action=decision.action,
+                    created_at=now
+                )
+                await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.SUCCESS, recent_resp)
+            else:
+                await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.FAILED_SEND)
 
             # ── MOOD IMAGE (very rare, private only) ──
             if is_private and should_send_image():
@@ -529,13 +550,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         else:
             logger.warning(f"[{bot_name}] No responses generated for user {user.id}")
-            await state_manager.record_response_outcome(bot_name, chat.id, user.id, False, decision.action)
+            await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.FAILED_GENERATION)
 
     except Exception as e:
         logger.error(f"Message handling error ({bot_name}): {e}", exc_info=True)
         try:
             # We assume decision was made, if not, it will fail but it's safe
-            await state_manager.record_response_outcome(bot_name, chat.id, user.id, False, decision.action)
+            await state_manager.record_response_outcome(bot_name, chat.id, user.id, ResponseOutcome.FAILED_SEND)
         except:
             pass
             

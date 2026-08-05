@@ -6,7 +6,9 @@ from .models import (
     ConversationAction,
     ConversationDecision,
     AppraisalResult,
-    EmotionalInputContext
+    EmotionalInputContext,
+    ResponseOutcome,
+    RecentResponse
 )
 from .state_manager import state_manager, EmotionalStateManager
 from .appraisal import AppraisalEngine
@@ -28,5 +30,7 @@ __all__ = [
     'EmotionEngine',
     'ConversationPolicy',
     'DailyLifeGenerator',
-    'EmotionalInputContext'
+    'EmotionalInputContext',
+    'ResponseOutcome',
+    'RecentResponse'
 ]
