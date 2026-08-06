@@ -12,6 +12,7 @@ from .models import (
     TurnPlan,
     ConversationSession,
     CharacterClaim,
+    DiscourseFrame,
     SHARED_WORLD
 )
 from .state_manager import state_manager, EmotionalStateManager
@@ -41,6 +42,7 @@ __all__ = [
     'TurnPlan',
     'ConversationSession',
     'CharacterClaim',
+    'DiscourseFrame',
     'director',
     'ConversationDirector',
     'SHARED_WORLD'

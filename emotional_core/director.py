@@ -6,7 +6,13 @@ from datetime import datetime, timezone, timedelta
 import asyncio
 from config import logger, Config
 
-from .models import TurnPlan, ConversationSession, SHARED_WORLD
+from .models import TurnPlan, ConversationSession, DiscourseFrame, SHARED_WORLD
+
+_CONTEXT_DEPENDENT_MSGS = {
+    "matlab", "kya matlab", "kis baat ka", "konsa plan", "plan kis baat ka", "why", "kyu",
+    "kaise", "fir", "acha", "kya", "kon", "kab", "uska kya", "wo kya",
+    "ku", "how", "then", "sach", "really", "achha", "or batao"
+}
 
 # ── Ambiguous-referent tokens ────────────────────────────────────────────────
 _AMBIGUOUS_REFS = re.compile(
@@ -127,6 +133,29 @@ class ConversationDirector:
 
             session = self._sessions[key]
             text_lower = text.lower()
+
+            # Session and Discourse Frame expiry on long inactivity or new day
+            last_activity = session.discourse_frame.updated_at or session.active_since
+            if last_activity and (now - last_activity > timedelta(minutes=120) or now.date() != last_activity.date()):
+                session.discourse_frame = DiscourseFrame()
+                session.last_topic = None
+
+            # Track user discourse message
+            session.discourse_frame.last_user_message_id = message_id
+            session.discourse_frame.last_user_text = text
+
+            # Check for initial romantic flirting or conversational repair
+            if any(w in text_lower for w in ["patane", "patana", "impress", "flirt"]):
+                if any(w in text_lower for w in ["aree", "arey", "are ", "patane ki baat"]):
+                    # Will be marked as REPAIR_PREVIOUS_MISUNDERSTANDING during correction phase
+                    pass
+                else:
+                    session.discourse_frame.current_dialogue_domain = "romantic_flirting"
+                    target = session.active_bot or "niyati"
+                    session.discourse_frame.current_proposition = f"user is attempting to romantically impress {target.capitalize()}"
+                    session.discourse_frame.last_mentioned_action = "patana"
+                    session.discourse_frame.last_mentioned_object = target.capitalize()
+                    logger.info(f"[Discourse] domain=romantic_flirting proposition=user_trying_to_impress_{target.lower()}")
             explicit_target = None
             selected_bots = ()
             reason = "general_fallback"
@@ -176,6 +205,7 @@ class ConversationDirector:
                         normalized_question=normalized_question,
                         reason=reason,
                         conversation_session_id=str(chat_id) + "_" + str(user_id) + "_" + str(sess_ts),
+                        discourse_frame=session.discourse_frame,
                     )
                     self._turn_plans[plan_key] = plan
                     return plan
@@ -227,13 +257,29 @@ class ConversationDirector:
             elif bool(re.search(r'\b(bruno|palakcreates)\b', text_lower)) or ("mumbai" in text_lower and any(w in text_lower for w in ["kaha", "kahan", "rehti", "city", "se ho"])):
                 explicit_target = "palak"
                 reason = "entity_owner:palak"
-            elif (text_lower.strip(' ?!') in ["ku", "kyu", "why", "kaise", "how", "fir", "then", "acha", "sach", "kon", "kab", "or batao", "matlab", "really", "achha"] or len(text_lower.split()) <= 2) and session.active_bot:
-                explicit_target = session.active_bot
+            elif (text_lower.strip(' ?!') in _CONTEXT_DEPENDENT_MSGS or len(text_lower.split()) <= 2) and (session.active_bot or session.last_bot_name):
+                explicit_target = session.active_bot or session.last_bot_name
                 reason = "short_followup:last_speaker"
-                if text_lower.strip(' ?!') in ["ku", "kyu", "why"]:
+                cleaned_msg = text_lower.strip(' ?!')
+                if cleaned_msg in ["ku", "kyu", "why"]:
                     resolved_intent = "ASK_REASON"
-                elif text_lower.strip(' ?!') in ["matlab", "kaise"]:
+                elif cleaned_msg in ["matlab", "kaise", "kya matlab", "kya"]:
                     resolved_intent = "ASK_CLARIFICATION"
+                    if session.discourse_frame.last_bot_text:
+                        last_bot_msg = session.discourse_frame.last_bot_text
+                        bot_cap = (session.last_bot_name or session.active_bot or "Niyati").capitalize()
+                        if "bas baat kar" in last_bot_msg.lower():
+                            normalized_question = f"What did {bot_cap} mean by saying the user should simply talk to her?"
+                        else:
+                            normalized_question = f"What did {bot_cap} mean by saying: {last_bot_msg}?"
+                    logger.info(f"[Reference] text=\"{text}\" source=last_bot_utterance")
+                elif cleaned_msg in ["plan kis baat ka", "kis baat ka", "konsa plan", "uska kya", "wo kya", "kon", "kab", "fir", "acha", "sach", "really", "achha", "or batao"]:
+                    resolved_intent = "ASK_CLARIFICATION"
+                    if cleaned_msg in ["plan kis baat ka", "kis baat ka", "konsa plan"]:
+                        if session.discourse_frame.current_dialogue_domain == "romantic_flirting" or session.discourse_frame.unresolved_referents.get("plan"):
+                            bot_cap = (session.last_bot_name or session.active_bot or "Niyati").capitalize()
+                            normalized_question = f"What romantic/relationship plan was {bot_cap} referring to in her immediately previous message?"
+                            logger.info("[Reference] noun=\"plan\" domain=romantic_intention")
                 else:
                     resolved_intent = "CONTINUE_TOPIC"
                 if session.last_topic and session.last_topic.startswith("current_"):
@@ -264,15 +310,23 @@ class ConversationDirector:
                     text, explicit_target
                 )
 
-            # 5. Correction handling
+            # 5. Correction handling & Conversational Repair
             is_correction = False
-            if "maine toh niyati se" in text_lower or "niyati se pucha" in text_lower or "niyati se baat" in text_lower:
+            if any(p in text_lower for p in ["patane ki baat", "impress karne ki baat", "flirt karne ki baat"]) or (any(w in text_lower for w in ["aree", "arey", "are "]) and any(w in text_lower for w in ["patana", "patane", "impress", "flirt"])):
+                explicit_target = session.active_bot or explicit_target or "niyati"
+                resolved_intent = "REPAIR_PREVIOUS_MISUNDERSTANDING"
+                reason = "user_correction"
+                is_correction = True
+                session.discourse_frame.current_dialogue_domain = "romantic_flirting"
+                session.discourse_frame.current_proposition = f"user is attempting to romantically impress {explicit_target.capitalize()}"
+                logger.info("[Repair] restored_domain=romantic_flirting reason=user_correction")
+            elif "maine toh niyati se" in text_lower or "niyati se pucha" in text_lower or "niyati se baat" in text_lower:
                 explicit_target = "niyati"
                 is_correction = True
             elif "maine toh palak se" in text_lower or "palak se pucha" in text_lower or "palak se baat" in text_lower:
                 explicit_target = "palak"
                 is_correction = True
-            if is_correction and session.pending_question:
+            if is_correction and session.pending_question and resolved_intent != "REPAIR_PREVIOUS_MISUNDERSTANDING":
                 normalized_question = session.pending_question
                 reason = "user_correction"
                 resolved_intent = "correction"
@@ -317,6 +371,7 @@ class ConversationDirector:
                 conversation_session_id=str(chat_id) + "_" + str(user_id) + "_" + str(sess_ts),
                 is_both_turn=is_both_turn,
                 bot_prompts=bot_prompts,
+                discourse_frame=session.discourse_frame,
             )
             self._turn_plans[plan_key] = plan
             return plan
@@ -351,7 +406,7 @@ class ConversationDirector:
                 else:
                     if not session.active_bot or session.active_bot not in ("niyati", "palak"):
                         session.active_bot = responding_bot
-                session.active_since = session.active_since or now
+                session.active_since = now
                 session.last_bot_name = responding_bot
                 if sent_bot_message_ids:
                     session.last_bot_message_id = sent_bot_message_ids[0]
@@ -359,6 +414,15 @@ class ConversationDirector:
                 session.expires_at = now + timedelta(minutes=20)
                 if claim_type:
                     session.last_topic = claim_type
+                session.discourse_frame.last_bot_message_id = sent_bot_message_ids[0] if sent_bot_message_ids else None
+                session.discourse_frame.last_bot_text = response_text
+                session.discourse_frame.updated_at = now
+                resp_lower = response_text.lower()
+                if session.discourse_frame.current_dialogue_domain == "romantic_flirting":
+                    if any(w in resp_lower for w in ["bas baat", "pagal", "kya patane", "baat kar", "koi plan nhi", "koi plan nahi"]):
+                        session.discourse_frame.last_bot_speech_act = "playful_deflection"
+                        if "plan" in resp_lower:
+                            session.discourse_frame.unresolved_referents["plan"] = f"romantic intention or relationship plan in response to the user trying to impress {responding_bot.capitalize()}"
             return True
 
     def check_world_facts_violation(self, bot_name: str, response_text: str,

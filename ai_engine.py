@@ -170,7 +170,8 @@ class AIEngine:
                                  reply_to_user: str = None,
                                  psychological_context: str = None,
                                  recent_responses: List[str] = None,
-                                 active_claims: Dict = None) -> List[str]:
+                                 active_claims: Dict = None,
+                                 discourse_frame=None) -> List[str]:
         """
         Generate AI response for a bot.
         """
@@ -211,7 +212,12 @@ class AIEngine:
         )
         
         other_bot = 'niyati' if bot_name == 'palak' else 'palak'
-        system_prompt += f"\n\nYou are {bot_name.upper()}.\nRespond only as {bot_name.upper()}.\nNever reproduce role labels.\nNever answer a message assigned to {other_bot.upper()}.\nNever use 'hum dono', 'humein', or 'ja rahe hain' to speak for both."
+        system_prompt += (
+            f"\n\nYou are {bot_name.upper()}.\nRespond only as {bot_name.upper()}.\n"
+            f"Never reproduce role labels.\nNever answer a message assigned to {other_bot.upper()}.\n"
+            f"Never use 'hum dono', 'humein', or 'ja rahe hain' to speak for both.\n"
+            f"Answer the immediate conversational reference first. Do not introduce an unrelated activity, location, food plan or old claim."
+        )
 
         # 6. Build messages for AI
         messages = [{"role": "system", "content": system_prompt}]
@@ -286,6 +292,19 @@ class AIEngine:
                                 invalid = True
                                 logger.warning(f"[{bot_name}] Contradicts claim: replaced sleepy with bored without explaining sleepy")
                                 break
+
+            # Topic-Drift Validator & Conversational Repair check
+            if discourse_frame:
+                domain = getattr(discourse_frame, "current_dialogue_domain", None)
+                if domain == "romantic_flirting":
+                    # Reject candidate switching from romantic_flirting to meal planning without explicit transition
+                    if any(w in reply_lower for w in ["shaam ko kya khana hai", "khana", "khaungi", "paneer", "meal", "dinner"]):
+                        invalid = True
+                        logger.warning("[Validator] rejected reason=topic_drift romantic_flirting->meal_plan")
+                    # Reject claiming not to understand when context exists
+                    elif any(w in reply_lower for w in ["main samjhi nahi", "samajh nahi aaya", "kya baat kar rahe ho", "kya keh rahe ho"]):
+                        invalid = True
+                        logger.warning(f"[{bot_name}] Response rejected: claimed not to understand existing discourse context.")
                                 
             if invalid:
                 logger.warning(f"[{bot_name}] Response rejected. Retrying... (Attempt {attempt+1}/{max_retries})")

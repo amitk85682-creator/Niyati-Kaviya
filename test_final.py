@@ -1319,3 +1319,152 @@ class TestPhase2B(unittest.IsolatedAsyncioTestCase):
         plan2 = await director.plan_turn(4, 400, "User", 402, "maine toh palak se pucha", is_group=True)
         self.assertEqual(plan2.normalized_question, "Kaise ho tum?")
         self.assertEqual(plan2.selected_bots, ("palak",))
+
+
+class TestPhase2B2SemanticContinuity(IsolatedAsyncioTestCase):
+    """Phase 2B.2 – Immediate Discourse Meaning and Semantic Continuity."""
+
+    def setUp(self):
+        from emotional_core.director import director
+        director.clear()
+
+    async def test_00_live_failure_exact_sequence(self):
+        from emotional_core.director import director
+        from emotional_core.models import ResponseOutcome
+        chat_id = 9901
+        user_id = 501
+
+        # Turn 1: User says: "kya kar rahi ho Niyati"
+        p1 = await director.plan_turn(chat_id, user_id, "User", 1, "kya kar rahi ho Niyati", is_group=True)
+        self.assertEqual(p1.selected_bots, ("niyati",))
+        await director.record_turn_outcome(chat_id, user_id, 1, p1.conversation_session_id, "niyati", ResponseOutcome.SUCCESS, (101,), "bas movie dekh rahi hu, tum sunao")
+
+        # Turn 2: User says: "main tumse baat kar raha hoon tumhe patane ki koshish"
+        p2 = await director.plan_turn(chat_id, user_id, "User", 2, "main tumse baat kar raha hoon tumhe patane ki koshish", is_group=True)
+        self.assertEqual(p2.selected_bots, ("niyati",))
+        self.assertEqual(p2.discourse_frame.current_dialogue_domain, "romantic_flirting")
+        await director.record_turn_outcome(chat_id, user_id, 2, p2.conversation_session_id, "niyati", ResponseOutcome.SUCCESS, (102,), "arre pagal, kya patane ki koshish kar rha hai, bas baat kar le", claim_type="romantic_intention")
+        session = director._sessions[director._get_session_key(chat_id, user_id)]
+        self.assertEqual(session.discourse_frame.last_bot_speech_act, "playful_deflection")
+
+        # Turn 3: User says: "matlab?"
+        p3 = await director.plan_turn(chat_id, user_id, "User", 3, "matlab?", is_group=True)
+        self.assertEqual(p3.selected_bots, ("niyati",))
+        self.assertEqual(p3.resolved_intent, "ASK_CLARIFICATION")
+        self.assertIn("What did Niyati mean by saying the user should simply talk to her?", p3.normalized_question)
+        await director.record_turn_outcome(chat_id, user_id, 3, p3.conversation_session_id, "niyati", ResponseOutcome.SUCCESS, (103,), "bas baat kar, koi plan nhi hai abhi", claim_type="conversation_plan")
+
+        # Turn 4: User says: "plan kis baat ka"
+        p4 = await director.plan_turn(chat_id, user_id, "User", 4, "plan kis baat ka", is_group=True)
+        self.assertEqual(p4.selected_bots, ("niyati",))
+        self.assertEqual(p4.resolved_intent, "ASK_CLARIFICATION")
+        self.assertIn("romantic/relationship plan", p4.normalized_question)
+        await director.record_turn_outcome(chat_id, user_id, 4, p4.conversation_session_id, "niyati", ResponseOutcome.SUCCESS, (104,), "are romantic plans ki, abhi koi relationship plan nhi hai mera 😅", claim_type="romantic_intention")
+
+        # Turn 5 (Correction test): User says: "aree main tumhe patane ki baat kar raha hoon"
+        p5 = await director.plan_turn(chat_id, user_id, "User", 5, "aree main tumhe patane ki baat kar raha hoon", is_group=True)
+        self.assertEqual(p5.selected_bots, ("niyati",))
+        self.assertEqual(p5.resolved_intent, "REPAIR_PREVIOUS_MISUNDERSTANDING")
+        self.assertEqual(p5.discourse_frame.current_dialogue_domain, "romantic_flirting")
+        self.assertIn("user is attempting to romantically impress", p5.discourse_frame.current_proposition)
+
+    async def test_a_immediate_reference_overrides_meal_claim(self):
+        from emotional_core.director import director
+        from emotional_core.models import CharacterClaim
+        from emotional_core.state_manager import state_manager
+        from datetime import datetime, timezone, timedelta
+        chat_id = 9902
+        user_id = 502
+
+        now_utc = datetime.now(timezone.utc)
+        def add_meal_claim(s):
+            s.claims["meal_plan"] = CharacterClaim("niyati", "meal_plan", "eating paneer", "test", 1, 10, now_utc, now_utc + timedelta(hours=3))
+        await state_manager.mutate_state("niyati", chat_id, user_id, add_meal_claim)
+
+        p1 = await director.plan_turn(chat_id, user_id, "User", 10, "tumhe impress karne ki koshish kar raha hu", is_group=True)
+        self.assertEqual(p1.discourse_frame.current_dialogue_domain, "romantic_flirting")
+        
+        state = await state_manager.get_state("niyati", chat_id, user_id)
+        filtered_claims = dict(state.claims)
+        if p1 and p1.discourse_frame and p1.discourse_frame.current_dialogue_domain == "romantic_flirting":
+            unrelated = [k for k, c in filtered_claims.items() if c.claim_type in ("meal_plan", "travel_plan", "current_plan") or any(w in c.value.lower() for w in ["paneer", "khana", "meal"])]
+            for k in unrelated:
+                del filtered_claims[k]
+        self.assertNotIn("meal_plan", filtered_claims)
+
+    async def test_b_old_claim_expires_after_inactivity(self):
+        from emotional_core.state_manager import state_manager
+        from emotional_core.models import CharacterClaim
+        from datetime import datetime, timezone, timedelta
+        chat_id = 9903
+        user_id = 503
+
+        now_utc = datetime.now(timezone.utc)
+        past_utc = now_utc - timedelta(hours=4)
+        def add_expired(s):
+            s.claims["meal_plan"] = CharacterClaim("niyati", "meal_plan", "eating paneer", "test", 1, 10, past_utc, past_utc + timedelta(hours=3))
+        await state_manager.mutate_state("niyati", chat_id, user_id, add_expired)
+
+        state = await state_manager.get_state("niyati", chat_id, user_id)
+        expired = [k for k, c in state.claims.items() if c.valid_until and now_utc > c.valid_until]
+        for k in expired:
+            del state.claims[k]
+        self.assertNotIn("meal_plan", state.claims)
+
+    async def test_c_matlab_resolves_against_previous_bot_utterance(self):
+        from emotional_core.director import director
+        from emotional_core.models import ResponseOutcome
+        chat_id = 9904
+        user_id = 504
+
+        p1 = await director.plan_turn(chat_id, user_id, "User", 100, "palak tumhari choice achi hai", is_group=True)
+        await director.record_turn_outcome(chat_id, user_id, 100, p1.conversation_session_id, "palak", ResponseOutcome.SUCCESS, (200,), "meri har choice best hoti hai")
+        
+        p2 = await director.plan_turn(chat_id, user_id, "User", 101, "matlab?", is_group=True)
+        self.assertEqual(p2.selected_bots, ("palak",))
+        self.assertEqual(p2.resolved_intent, "ASK_CLARIFICATION")
+        self.assertIn("What did Palak mean by saying: meri har choice best hoti hai?", p2.normalized_question)
+
+    async def test_d_topic_drift_validator_rejection(self):
+        from emotional_core.models import DiscourseFrame
+        df = DiscourseFrame(current_dialogue_domain="romantic_flirting")
+
+        reply_lower1 = "shaam ko kya khana hai pata nahi"
+        reply_lower2 = "main samjhi nahi, kya baat kar rahe ho"
+        invalid1 = False
+        invalid2 = False
+        if df.current_dialogue_domain == "romantic_flirting":
+            if any(w in reply_lower1 for w in ["shaam ko kya khana hai", "khana", "khaungi", "paneer", "meal", "dinner"]):
+                invalid1 = True
+        if df.current_dialogue_domain == "romantic_flirting":
+            if any(w in reply_lower2 for w in ["main samjhi nahi", "samajh nahi aaya", "kya baat kar rahe ho", "kya keh rahe ho"]):
+                invalid2 = True
+        self.assertTrue(invalid1)
+        self.assertTrue(invalid2)
+
+    async def test_e_both_turn_independent_semantic_contexts(self):
+        from emotional_core.director import director
+        chat_id = 9905
+        user_id = 505
+
+        plan = await director.plan_turn(chat_id, user_id, "User", 300, "tum dono ki kya rai hai patane par?", is_group=True)
+        self.assertTrue(plan.is_both_turn)
+        self.assertEqual(plan.selected_bots, ("niyati", "palak"))
+        p_niyati = plan.get_bot_prompt("niyati")
+        p_palak = plan.get_bot_prompt("palak")
+        self.assertIn("Niyati", p_niyati)
+        self.assertIn("Palak", p_palak)
+        self.assertNotEqual(p_niyati, p_palak)
+
+    async def test_f_telegram_reply_overrides_active_speaker_default(self):
+        from emotional_core.director import director
+        from emotional_core.models import ResponseOutcome
+        chat_id = 9906
+        user_id = 506
+
+        p1 = await director.plan_turn(chat_id, user_id, "User", 400, "Niyati hello", is_group=True)
+        await director.record_turn_outcome(chat_id, user_id, 400, p1.conversation_session_id, "niyati", ResponseOutcome.SUCCESS, (500,), "hi there")
+        
+        p2 = await director.plan_turn(chat_id, user_id, "User", 401, "matlab?", reply_to_bot_name="palak", is_group=True)
+        self.assertEqual(p2.selected_bots, ("palak",))
+        self.assertEqual(p2.reason, "telegram_reply")

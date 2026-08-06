@@ -223,6 +223,26 @@ class ConversationDecision:
     allow_emoji: bool = True
     reason: str = ""
 
+
+@dataclass
+class DiscourseFrame:
+    last_user_message_id: Optional[int] = None
+    last_user_text: str = ""
+    last_bot_message_id: Optional[int] = None
+    last_bot_text: str = ""
+    last_user_speech_act: Optional[str] = None
+    last_bot_speech_act: Optional[str] = None
+    current_dialogue_domain: Optional[str] = None
+    current_proposition: Optional[str] = None
+    last_mentioned_action: Optional[str] = None
+    last_mentioned_object: Optional[str] = None
+    unresolved_referents: Dict[str, str] = field(default_factory=dict)
+    pending_explanation: Optional[str] = None
+    pending_clarification: Optional[str] = None
+    topic_stack: List[str] = field(default_factory=list)
+    updated_at: Optional[datetime] = None
+
+
 @dataclass(frozen=True, slots=True)
 class TurnPlan:
     chat_id: int
@@ -244,6 +264,7 @@ class TurnPlan:
     is_both_turn: bool = False
     # Per-bot prompt override for both-turns: tuple of (bot_name, prompt) pairs
     bot_prompts: tuple = ()  # tuple[tuple[str, str], ...]
+    discourse_frame: Optional[DiscourseFrame] = None
 
     def get_bot_prompt(self, bot_name: str) -> Optional[str]:
         for b, p in self.bot_prompts:
@@ -272,6 +293,7 @@ class ConversationSession:
     clarification_expected: bool = False               # True when we sent an ambiguous question
     clarification_target_bot: Optional[str] = None     # which bot should answer after clarification
     last_relation_reference: Optional[str] = None      # e.g. "friend", "dost"
+    discourse_frame: DiscourseFrame = field(default_factory=DiscourseFrame)
 
 @dataclass
 class CharacterClaim:
