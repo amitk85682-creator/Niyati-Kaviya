@@ -58,23 +58,20 @@ class ConversationPolicy:
             decision.reason = "playful_teasing"
             return decision
             
-        # E. Repeated serious insult (or single based on high irritation)
+        # E. Serious insult or abuse
         if appraisal.is_serious_insult or state.mood.irritation > 0.7:
             state.dialogue.consecutive_hostility_count += 1
             if state.dialogue.consecutive_hostility_count == 1:
                 decision.action = ConversationAction.SET_BOUNDARY
-                decision.content_goal = "set boundary calmly but firmly"
+                decision.content_goal = "respond with cold distance. 1-3 words ONLY like 'wow okay' or 'nice'. Do NOT lecture, do NOT say 'shanti rakho' or 'gaali mat do'. Be cold, not preachy."
                 decision.reason = "first_serious_insult"
-            elif state.dialogue.consecutive_hostility_count == 2:
-                state.dialogue.stance = "GUARDED"
-                decision.action = ConversationAction.SET_BOUNDARY
-                decision.content_goal = "set strict boundary, no apologies"
-                decision.reason = "repeated_insult_guarded"
+                decision.max_sentences = 1
+                decision.allow_emoji = False
             else:
                 state.dialogue.stance = "WITHDRAWN"
                 decision.action = ConversationAction.STAY_SILENT
                 decision.should_respond = False
-                decision.reason = "repeated_insult_withdrawn"
+                decision.reason = "repeated_abuse_withdrawn"
             return decision
         else:
             state.dialogue.consecutive_hostility_count = 0

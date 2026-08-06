@@ -31,6 +31,18 @@ BANNED_GENERIC_PHRASES = [
     "painting karne ki soch rahi",
     "ghar pe araam kar rahi",
     "honestly abhi kuch clear nahi",
+    # Meta-awareness labels (bot should never label the situation)
+    "love confession",
+    "flirting",
+    "appreciation",
+    "compliment",
+    "ye romantic",
+    # Teacher-like gaali responses (bot should be cold, not preachy)
+    "shanti rakho",
+    "gaali mat do",
+    "gaali dena",
+    "kam gaali",
+    "galat baat",
 ]
 
 class AIEngine:

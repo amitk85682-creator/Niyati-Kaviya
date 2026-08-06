@@ -54,6 +54,14 @@ class AppraisalEngine:
             res.is_user_sad = True
             res.emotional_weight = 0.8
             
+        elif any(w in text for w in ["fuck", "bitch", "bich", "mc ", "bc ", "madarchod",
+                                       "behenchod", "chutiya", "gandu", "randi", "saali",
+                                       "fuck you", "fuck off", "stfu"]):
+            res.intent = "severe_abuse"
+            res.is_serious_insult = True
+            res.emotional_weight = 0.9
+            res.social_threat = 0.8
+            
         elif any(w in text for w in ["boring", "stupid", "pagal", "chup", "hate", "bakwas", "dumb"]):
             # Teasing vs Insult based on relationship
             if relationship and relationship.familiarity > 0.4:
