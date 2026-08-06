@@ -218,12 +218,13 @@ class AIEngine:
             f"Never use 'hum dono', 'humein', or 'ja rahe hain' to speak for both.\n"
             f"Answer the immediate conversational reference first. Do not introduce an unrelated activity, location, food plan or old claim."
         )
+        system_prompt += "\n\nCRITICAL ANTI-REPETITION RULES:\n- Read ALL previous messages in this conversation before replying.\n- NEVER repeat the same sentence you already said.\n- If the user is repeating themselves, acknowledge the repetition instead of giving the same reply.\n- Each of your replies must be UNIQUE and DIFFERENT from your previous replies.\n- If you said 'pagal ho kya' before, you CANNOT say it again.\n- React specifically to the user's LATEST message, not generically."
 
         # 6. Build messages for AI
         messages = [{"role": "system", "content": system_prompt}]
 
         if not is_group and context_msgs:
-            for msg in context_msgs[-5:]:
+            for msg in context_msgs[-15:]:
                 messages.append({
                     "role": msg.get('role', 'user'),
                     "content": msg.get('content', '')
@@ -264,18 +265,31 @@ class AIEngine:
             if any(p in reply_lower for p in ["chill karo", "gussa kyu", "gussa kiyon", "maaf kar do"]):
                 invalid = True
                 
-            # Repetition guard and Fingerprinting
-            if is_group and recent_responses:
+            # Repetition guard and Fingerprinting (works in BOTH group and private)
+            if recent_responses:
                 for old_reply in recent_responses:
                     old_lower = old_reply.lower()
                     ratio = SequenceMatcher(None, reply_lower, old_lower).ratio()
                     if ratio > 0.75:
                         invalid = True
+                        logger.warning(f"[{bot_name}] Repetition detected (ratio={ratio:.2f}): '{reply_lower[:50]}' vs '{old_lower[:50]}'")
                         break
                     # Catch generic short repeats
                     if len(reply_lower) < 40 and (reply_lower in old_lower or old_lower in reply_lower):
                         invalid = True
+                        logger.warning(f"[{bot_name}] Short repeat detected: '{reply_lower[:50]}'")
                         break
+            
+            # Private chat: also check against context messages to avoid echoing previous replies
+            if not is_group and context_msgs:
+                for ctx_msg in context_msgs[-10:]:
+                    if ctx_msg.get('role') == 'assistant':
+                        old_resp = ctx_msg.get('content', '').lower()
+                        ratio = SequenceMatcher(None, reply_lower, old_resp).ratio()
+                        if ratio > 0.8:
+                            invalid = True
+                            logger.warning(f"[{bot_name}] Private chat repetition: '{reply_lower[:50]}' echoes previous reply")
+                            break
             # Claim Consistency Validation
             if active_claims:
                 for ctype, claim in active_claims.items():

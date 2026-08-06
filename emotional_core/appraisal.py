@@ -40,6 +40,14 @@ class AppraisalEngine:
                 res.intent = "statement"
                 res.emotional_weight = 0.1
                 
+        elif any(w in text for w in ["i love you", "love you", "meri jaan", "pyaar karta", "pyar karta",
+                                       "dil de diya", "tujhse pyaar", "love karta", "i luv u", "luv u",
+                                       "tere bina", "jaanu", "meri jaanu"]):
+            res.intent = "love_confession"
+            res.emotional_weight = 0.7
+            res.is_romantic_advance = True
+            res.requires_answer = True
+            
         elif any(w in text for w in ["sad", "dukhi", "rona", "toot", "depress", "akela", "rota"]):
             res.intent = "emotional_disclosure"
             res.is_emotional_disclosure = True

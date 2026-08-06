@@ -78,6 +78,32 @@ class ConversationPolicy:
             return decision
         else:
             state.dialogue.consecutive_hostility_count = 0
+        
+        # E2. Romantic advance / love confession
+        if appraisal.is_romantic_advance or appraisal.intent == "love_confession":
+            state.dialogue.consecutive_love_count += 1
+            count = state.dialogue.consecutive_love_count
+            if count == 1:
+                decision.action = ConversationAction.ACKNOWLEDGE
+                decision.content_goal = "react awkwardly/confused to sudden love confession. Short, natural. Do NOT say 'pagal ho kya itni jaldi se love'."
+                decision.reason = "first_love_confession"
+                decision.max_sentences = 1
+            elif count <= 3:
+                decision.action = ConversationAction.SET_BOUNDARY
+                decision.content_goal = "be dismissive about repeated love message. Acknowledge they said it before. Say something DIFFERENT from your last reply. Short and direct."
+                decision.reason = "repeated_love_confession"
+                decision.max_sentences = 1
+            else:
+                decision.action = ConversationAction.SET_BOUNDARY
+                decision.content_goal = "firmly tell user to stop repeating love messages. Be annoyed but not cruel. Each reply must be UNIQUE - never repeat previous response."
+                decision.reason = "excessive_love_confession"
+                decision.max_sentences = 1
+                decision.allow_emoji = False
+            return decision
+        else:
+            # Reset love counter on non-romantic messages
+            if state.dialogue.consecutive_love_count > 0 and appraisal.intent not in ["acknowledgement", "casual_update"]:
+                state.dialogue.consecutive_love_count = 0
             
         # E. User says "main sad hu"
         if appraisal.is_user_sad:

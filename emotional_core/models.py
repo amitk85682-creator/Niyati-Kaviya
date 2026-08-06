@@ -137,6 +137,7 @@ class UnresolvedEvent:
 class DialogueState:
     stance: str = "NEUTRAL"
     consecutive_hostility_count: int = 0
+    consecutive_love_count: int = 0
     active_topic: str = ""
     active_topic_owner: str = ""
     last_user_intent: str = ""
@@ -204,6 +205,7 @@ class AppraisalResult:
     is_serious_insult: bool = False
     is_playful_teasing: bool = False
     is_user_sad: bool = False
+    is_romantic_advance: bool = False
     directed_to_character: bool = False
     social_threat: float = 0.0
     emotional_weight: float = 0.1
