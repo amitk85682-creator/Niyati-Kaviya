@@ -451,6 +451,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if val < 0.66: return "medium"
             return "high"
             
+        # Randomize max_sentences (70% 1 msg, 20% 2 msgs, 10% 3 msgs)
+        if decision.action.name != "SET_BOUNDARY":
+            r_len = random.random()
+            if r_len < 0.7:
+                decision.max_sentences = 1
+            elif r_len < 0.9:
+                decision.max_sentences = 2
+            else:
+                decision.max_sentences = 3
+            
         # Fetch last shared media for context
         from media_memory import MediaMemory
         last_shared_media = await MediaMemory.get_last_shared(bot_name, chat.id, user.id)
@@ -622,14 +632,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_to=message.message_id if is_group else None,
                 )
                 
+                # 3-4s natural wait as requested by user before sending the photo
+                await asyncio.sleep(random.uniform(3, 4))
+                
                 # Send media
                 try:
-                    sent_media = await context.bot.copy_message(
-                        chat_id=chat.id,
-                        from_chat_id=selected_media_for_turn.channel_id,
-                        message_id=selected_media_for_turn.channel_message_id,
-                        caption=""
-                    )
+                    sent_media = None
+                    if selected_media_for_turn.telegram_file_id:
+                        # Use send_photo to explicitly add spoiler
+                        sent_media = await context.bot.send_photo(
+                            chat_id=chat.id,
+                            photo=selected_media_for_turn.telegram_file_id,
+                            has_spoiler=True,
+                            caption=""
+                        )
+                    else:
+                        # Fallback if no file_id
+                        sent_media = await context.bot.copy_message(
+                            chat_id=chat.id,
+                            from_chat_id=selected_media_for_turn.channel_id,
+                            message_id=selected_media_for_turn.channel_message_id,
+                            caption=""
+                        )
+                    
                     if sent_media:
                         media_sent = True
                         sent_msg_ids.append(sent_media.message_id)
@@ -649,7 +674,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                         await MediaMemory.save_last_shared(last_shared_media_obj)
                 except Exception as e:
-                    logger.error(f"Failed to send media via copyMessage: {e}")
+                    logger.error(f"Failed to send media: {e}")
             
             if not media_sent:
                 sent_msg_ids = await send_multi_messages(
