@@ -572,7 +572,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not responses:
                 logger.error(f"[{bot_name}] Fallback also returned 0 responses. Using state-based reply.")
                 character = __import__('characters', fromlist=['get_character']).get_character(bot_name)
-                responses = character.get('error_responses', ["thoda busy hu, baad mein?"])
+                responses = [random.choice(character.get('error_responses', ["thoda busy hu, baad mein?"]))]
 
         # Random Bonus (Private only)
         if is_private and random.random() < 0.1:
@@ -607,7 +607,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not filtered_responses:
                 logger.warning(f"[{bot_name}] All responses filtered by world-facts check, using fallback.")
                 character = __import__('characters', fromlist=['get_character']).get_character(bot_name)
-                filtered_responses = character.get('error_responses', ["thoda busy hu, baad mein?"])
+                filtered_responses = [random.choice(character.get('error_responses', ["thoda busy hu, baad mein?"]))]
             responses = filtered_responses
 
             if is_group:
