@@ -46,6 +46,12 @@ class MediaDecisionEngine:
             return MediaDecision(should_send=False, reason="media_disabled")
             
         req_type = MediaDecisionEngine._is_direct_request(user_message)
+        if not req_type and state and state.dialogue.consecutive_media_requests > 0:
+            import re
+            msg_lower = user_message.lower()
+            if bool(re.search(r'\b(pls|please|plz|send|bhej|bhejo|karo|do na|yrr|yaar)\b', msg_lower)):
+                req_type = 'selfie'
+                
         last_shared = await MediaMemory.get_last_shared(bot_name, chat_id, user_id)
         
         # 1. Direct Request

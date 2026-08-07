@@ -475,6 +475,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         req_type = MediaDecisionEngine._is_direct_request(user_message)
         def media_req_mutator(s):
+            nonlocal req_type
+            if not req_type and s.dialogue.consecutive_media_requests > 0:
+                import re
+                if bool(re.search(r'\b(pls|please|plz|send|bhej|bhejo|karo|do na|yrr|yaar)\b', user_message.lower())):
+                    req_type = 'selfie'
+                    
             if req_type or 'dikhao' in user_message.lower():
                 s.dialogue.consecutive_media_requests += 1
             elif len(user_message.split()) > 5:
