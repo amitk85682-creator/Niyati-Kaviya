@@ -211,6 +211,8 @@ class Database:
         self.local_groups: Dict[str, Dict] = {}       # key: "{bot_name}_{chat_id}"
         self.local_group_messages: Dict[int, deque] = defaultdict(lambda: deque(maxlen=Config.MAX_GROUP_MESSAGES))
         self.local_activities: deque = deque(maxlen=1000)
+        self.local_character_media: Dict[str, Dict] = {} # key: media_id
+        self.local_last_shared_media: Dict[str, Dict] = {} # key: "{bot_name}_{chat_id}_{user_id}"
 
         # Cache access tracking
         self._user_access_times: Dict[str, datetime] = {}
@@ -279,6 +281,11 @@ class Database:
                 self._group_access_times.pop(k, None)
             if to_remove:
                 logger.info(f"🧹 Cleaned {len(to_remove)} groups from cache")
+                
+        # Cleanup last shared media
+        if len(self.local_last_shared_media) > 10000:
+            logger.info("🧹 Cleaning last shared media from cache")
+            self.local_last_shared_media.clear()
 
     # ========== USER OPERATIONS ==========
 
@@ -767,6 +774,72 @@ class Database:
                 logger.debug(f"Activity log error: {e}")
 
         self.local_activities.append(activity)
+
+    # ========== MEDIA VAULT (Phase 2C) ==========
+
+    async def upsert_character_media(self, media_dict: Dict) -> bool:
+        """Upsert character media to database"""
+        if self.connected and self.client:
+            try:
+                # Convert tags list to string or keep as list depending on supabase column type.
+                # Assuming supabase jsonb or text array handles list.
+                # Using upsert
+                res = await self.client.upsert('character_media', media_dict)
+                if res:
+                    return True
+            except Exception as e:
+                logger.error(f"Error upserting character media to supabase: {e}")
+        
+        # Fallback to local
+        self.local_character_media[media_dict['media_id']] = media_dict
+        return True
+
+    async def get_all_character_media(self, bot_name: str) -> List[Dict]:
+        """Get all media for a specific bot"""
+        if self.connected and self.client:
+            try:
+                res = await self.client.select('character_media', '*', {'bot_name': bot_name, 'is_active': True})
+                if res:
+                    return res
+            except Exception as e:
+                logger.error(f"Error fetching character media: {e}")
+                
+        # Fallback to local
+        return [m for m in self.local_character_media.values() if m['bot_name'] == bot_name and m.get('is_active', True)]
+        
+    async def save_last_shared_media(self, shared_dict: Dict) -> bool:
+        """Save the last shared media memory"""
+        key = f"{shared_dict['bot_name']}_{shared_dict['chat_id']}_{shared_dict['user_id']}"
+        if self.connected and self.client:
+            try:
+                # We can update or insert based on unique constraint (bot_name, chat_id, user_id)
+                res = await self.client.upsert('last_shared_media', shared_dict)
+                if res:
+                    self.local_last_shared_media[key] = shared_dict
+                    return True
+            except Exception as e:
+                logger.error(f"Error saving last shared media to supabase: {e}")
+                
+        self.local_last_shared_media[key] = shared_dict
+        return True
+
+    async def get_last_shared_media(self, bot_name: str, chat_id: int, user_id: int) -> Optional[Dict]:
+        """Retrieve the last shared media"""
+        key = f"{bot_name}_{chat_id}_{user_id}"
+        
+        if self.connected and self.client:
+            try:
+                res = await self.client.select(
+                    'last_shared_media', '*', 
+                    {'bot_name': bot_name, 'chat_id': chat_id, 'user_id': user_id}
+                )
+                if res and len(res) > 0:
+                    self.local_last_shared_media[key] = res[0]
+                    return res[0]
+            except Exception as e:
+                logger.error(f"Error fetching last shared media: {e}")
+                
+        return self.local_last_shared_media.get(key)
 
     # ========== CLEANUP ==========
 

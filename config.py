@@ -108,6 +108,23 @@ class Config:
     SECOND_BOT_TIMEOUT = float(os.getenv('SECOND_BOT_TIMEOUT', '10.0'))
     MAX_BOT_REPLIES_PER_HUMAN_MESSAGE = int(os.getenv('MAX_BOT_REPLIES_PER_HUMAN_MESSAGE', '3'))
     MAX_CONSECUTIVE_BOT_TO_BOT_REPLIES = int(os.getenv('MAX_CONSECUTIVE_BOT_TO_BOT_REPLIES', '1'))
+    # ── Media Vault ──
+    NIYATI_MEDIA_CHANNEL_ID = os.getenv('NIYATI_MEDIA_CHANNEL_ID', '')
+    PALAK_MEDIA_CHANNEL_ID = os.getenv('PALAK_MEDIA_CHANNEL_ID', '')
+    if NIYATI_MEDIA_CHANNEL_ID:
+        NIYATI_MEDIA_CHANNEL_ID = int(NIYATI_MEDIA_CHANNEL_ID)
+    else:
+        NIYATI_MEDIA_CHANNEL_ID = None
+    if PALAK_MEDIA_CHANNEL_ID:
+        PALAK_MEDIA_CHANNEL_ID = int(PALAK_MEDIA_CHANNEL_ID)
+    else:
+        PALAK_MEDIA_CHANNEL_ID = None
+        
+    MEDIA_ENABLED = os.getenv('MEDIA_ENABLED', 'true').lower() == 'true'
+    MEDIA_SPONTANEOUS_COOLDOWN_MINUTES = int(os.getenv('MEDIA_SPONTANEOUS_COOLDOWN_MINUTES', '20'))
+    MEDIA_SPONTANEOUS_COOLDOWN_MESSAGES = int(os.getenv('MEDIA_SPONTANEOUS_COOLDOWN_MESSAGES', '20'))
+    MEDIA_MAX_RESULTS = int(os.getenv('MEDIA_MAX_RESULTS', '5'))
+
     PRIVACY_MODE = os.getenv('PRIVACY_MODE', 'false').lower() == 'true'
 
     @classmethod

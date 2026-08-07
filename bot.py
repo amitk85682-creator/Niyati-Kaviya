@@ -112,6 +112,20 @@ async def error_handler(update, context):
 
 
 # ============================================================================
+# MEDIA INDEXER HANDLER (Phase 2C)
+# ============================================================================
+
+async def handle_channel_post_update(update, context):
+    """Handle channel posts for media indexing"""
+    from media_indexer import MediaIndexer
+    bot_name = context.bot_data.get('bot_name', 'niyati')
+    
+    if update.channel_post:
+        await MediaIndexer.handle_channel_post("channel_post", update.channel_post, bot_name)
+    elif update.edited_channel_post:
+        await MediaIndexer.handle_channel_post("edited_channel_post", update.edited_channel_post, bot_name)
+
+# ============================================================================
 # BOT BUILDER
 # ============================================================================
 
@@ -153,7 +167,12 @@ def setup_handlers(app: Application):
 
     # Main message handler
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND, handle_message
+        filters.TEXT & ~filters.COMMAND & ~filters.ChatType.CHANNEL, handle_message
+    ))
+    
+    # Channel post handler for media indexing
+    app.add_handler(MessageHandler(
+        filters.ChatType.CHANNEL, handle_channel_post_update
     ))
 
     # Error handler

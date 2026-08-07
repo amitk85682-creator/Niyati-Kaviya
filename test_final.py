@@ -1468,3 +1468,100 @@ class TestPhase2B2SemanticContinuity(IsolatedAsyncioTestCase):
         p2 = await director.plan_turn(chat_id, user_id, "User", 401, "matlab?", reply_to_bot_name="palak", is_group=True)
         self.assertEqual(p2.selected_bots, ("palak",))
         self.assertEqual(p2.reason, "telegram_reply")
+
+class TestPhase2CMediaVault(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from database import db
+        await db.initialize()
+        db.local_character_media.clear()
+        db.local_last_shared_media.clear()
+        
+    async def asyncTearDown(self):
+        from database import db
+        await db.close()
+
+    async def test_a_media_indexing_and_isolation(self):
+        from media_indexer import MediaIndexer
+        from media_vault import MediaVault
+        from config import Config
+        Config.NIYATI_MEDIA_CHANNEL_ID = -1001
+        Config.PALAK_MEDIA_CHANNEL_ID = -1002
+        
+        class DummyChat: id = -1001; type = 'channel'
+        class DummyPhoto: file_id = "niyati_photo_1"
+        class DummyMessage:
+            chat = DummyChat()
+            photo = [DummyPhoto()]
+            document = None
+            caption = "scene=cafe\nmood=happy\nuse_for=location,random_share"
+            message_id = 101
+
+        # Index Niyati
+        await MediaIndexer.handle_channel_post("channel_post", DummyMessage(), "niyati")
+        
+        DummyChat.id = -1002
+        DummyPhoto.file_id = "palak_photo_1"
+        DummyMessage.caption = "#selfie #happy"
+        DummyMessage.message_id = 201
+        
+        # Index Palak
+        await MediaIndexer.handle_channel_post("channel_post", DummyMessage(), "palak")
+        
+        niyati_media = await MediaVault.get_all_media("niyati")
+        palak_media = await MediaVault.get_all_media("palak")
+        
+        self.assertEqual(len(niyati_media), 1)
+        self.assertEqual(niyati_media[0].scene, "cafe")
+        self.assertEqual(niyati_media[0].bot_name, "niyati")
+        
+        self.assertEqual(len(palak_media), 1)
+        self.assertIn("selfie", palak_media[0].tags)
+        self.assertEqual(palak_media[0].bot_name, "palak")
+        
+    async def test_b_direct_requests_and_selection(self):
+        from media_decision_engine import MediaDecisionEngine
+        from config import Config
+        from media_vault import MediaVault
+        from media_models import CharacterMedia
+        
+        Config.MEDIA_ENABLED = True
+        
+        # Inject media
+        await MediaVault.save_media(CharacterMedia("m1", "niyati", -1, 1, "photo", pose="selfie", use_for=["selfie"]))
+        await MediaVault.save_media(CharacterMedia("m2", "niyati", -1, 2, "photo", scene="cafe", use_for=["location"]))
+        
+        decision = await MediaDecisionEngine.decide("niyati", "photo bhejo", 1, 1, False)
+        self.assertTrue(decision.should_send)
+        self.assertIn("selfie", decision.reason)
+        
+        decision_cafe = await MediaDecisionEngine.decide("niyati", "cafe dikhao", 1, 1, False)
+        self.assertTrue(decision_cafe.should_send)
+        self.assertIn("location", decision_cafe.reason)
+        
+    async def test_c_spontaneous_share_and_cooldown(self):
+        from media_decision_engine import MediaDecisionEngine
+        from media_memory import MediaMemory
+        from media_models import LastSharedMedia
+        from datetime import datetime, timezone
+        
+        # Test cooldown
+        mem = LastSharedMedia("niyati", 2, 2, "id1", 1, "cafe", "happy", None, datetime.now(timezone.utc).isoformat(), "caption", 100)
+        await MediaMemory.save_last_shared(mem)
+        
+        decision = await MediaDecisionEngine.decide("niyati", "hi", 2, 2, False)
+        # Should be blocked by cooldown since last share was just now
+        self.assertFalse(decision.should_send)
+            
+    async def test_d_last_shared_media_memory(self):
+        from media_memory import MediaMemory
+        from media_models import LastSharedMedia
+        from datetime import datetime, timezone
+        
+        mem = LastSharedMedia("niyati", 3, 3, "id1", 1, "cafe", "happy", None, datetime.now(timezone.utc).isoformat(), "my caption", 100)
+        await MediaMemory.save_last_shared(mem)
+        
+        retrieved = await MediaMemory.get_last_shared("niyati", 3, 3)
+        self.assertIsNotNone(retrieved)
+        self.assertEqual(retrieved.scene, "cafe")
+        self.assertEqual(retrieved.caption_summary, "my caption")
+

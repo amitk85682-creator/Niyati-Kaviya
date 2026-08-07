@@ -451,6 +451,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if val < 0.66: return "medium"
             return "high"
             
+        # Fetch last shared media for context
+        from media_memory import MediaMemory
+        last_shared_media = await MediaMemory.get_last_shared(bot_name, chat.id, user.id)
+        last_shared_str = ""
+        if last_shared_media:
+            last_shared_str = f"- recently shared media: scene={last_shared_media.scene or 'unknown'}, outfit={last_shared_media.outfit or 'unknown'}, info={last_shared_media.caption_summary[:50]}\n"
+
         psych_context = (
             f"Current psychological state:\n"
             f"- energy: {label(state.mood.energy)}\n"
@@ -467,6 +474,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"- avoid mentioning: {'college, Bruno, painting' if bot_name == 'palak' else 'hobbies randomly'}\n"
             f"- maximum response length: {decision.max_sentences} sentence(s)\n"
             f"- emoji allowed: {'yes' if decision.allow_emoji else 'no'}\n"
+            f"{last_shared_str}"
         )
 
         # Use per-bot normalized prompt for both-turns, or normalized_question from director
@@ -582,12 +590,69 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Do not split group responses into multiple message chunks
                 responses = ['\n\n'.join(responses)]
                 
-            sent_msg_ids = await send_multi_messages(
-                context.bot,
-                chat.id,
-                responses,
-                reply_to=message.message_id if is_group else None,
+            # [PHASE 2C] MEDIA DECISION
+            from media_decision_engine import MediaDecisionEngine
+            from media_models import LastSharedMedia
+            
+            combined_text = " ".join(responses)
+            media_decision = await MediaDecisionEngine.decide(
+                bot_name=bot_name,
+                user_message=user_message,
+                chat_id=chat.id,
+                user_id=user.id,
+                is_group=is_group,
+                current_scene=state.daily_life.location if 'state' in locals() and hasattr(state, 'daily_life') else None,
+                bot_context_text=combined_text
             )
+            
+            media_sent = False
+            if media_decision.should_send and media_decision.selected_media_id:
+                from media_vault import MediaVault
+                all_media = await MediaVault.get_all_media(bot_name)
+                selected_media = next((m for m in all_media if m.media_id == media_decision.selected_media_id), None)
+                
+                if selected_media:
+                    # Send text first
+                    sent_msg_ids = await send_multi_messages(
+                        context.bot, chat.id, responses,
+                        reply_to=message.message_id if is_group else None,
+                    )
+                    
+                    # Send media
+                    try:
+                        sent_media = await context.bot.copy_message(
+                            chat_id=chat.id,
+                            from_chat_id=selected_media.channel_id,
+                            message_id=selected_media.channel_message_id
+                        )
+                        if sent_media:
+                            media_sent = True
+                            sent_msg_ids.append(sent_media.message_id)
+                            await MediaVault.increment_use_count(selected_media.media_id, bot_name)
+                            last_shared_media_obj = LastSharedMedia(
+                                bot_name=bot_name,
+                                chat_id=chat.id,
+                                user_id=user.id,
+                                media_id=selected_media.media_id,
+                                channel_message_id=selected_media.channel_message_id,
+                                scene=selected_media.scene,
+                                mood=selected_media.mood,
+                                outfit=selected_media.outfit,
+                                sent_at=datetime.now(timezone.utc).isoformat(),
+                                caption_summary=selected_media.caption_raw or "media",
+                                source_turn_message_id=message.message_id
+                            )
+                            await MediaMemory.save_last_shared(last_shared_media_obj)
+                    except Exception as e:
+                        logger.error(f"Failed to send media via copyMessage: {e}")
+            
+            if not media_sent:
+                sent_msg_ids = await send_multi_messages(
+                    context.bot,
+                    chat.id,
+                    responses,
+                    reply_to=message.message_id if is_group else None,
+                )
             logger.info(f"[{bot_name}] Sent {len(responses)} msgs to {user.id}")
 
             # SAVE BOT'S RESPONSE TO SHARED GROUP MEMORY
