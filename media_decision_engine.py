@@ -9,18 +9,27 @@ class MediaDecisionEngine:
     @staticmethod
     def _is_direct_request(user_message: str) -> str:
         """Determine if user directly asked for media"""
+        import re
         if not user_message:
             return ''
             
         msg_lower = user_message.lower()
-        if any(w in msg_lower for w in ['aaj ka look dikhao', 'outfit dikhao', 'kya pehna hai']):
+        
+        if re.search(r'\b(outfit|kya pehna|look dikhao)\b', msg_lower):
             return 'outfit'
-        if any(w in msg_lower for w in ['selfie bhejo', 'pic send karo', 'photo bhejo', 'tum kaisi lag rahi ho']):
-            return 'selfie'
-        if any(w in msg_lower for w in ['location ki pic bhejo', 'kahan ho', 'cafe dikhao']):
+            
+        if re.search(r'\b(location|kahan ho|cafe dikhao)\b', msg_lower):
             return 'location'
+            
+        has_pic = bool(re.search(r'\b(pic|pics|photo|photos|selfie|tasvir|image)\b', msg_lower))
+        has_req = bool(re.search(r'\b(send|bhej|bhejo|dikha|dikhao|dekha|de|kro|karo)\b', msg_lower))
+        
+        if (has_pic and has_req) or bool(re.search(r'\b(apni pic|tumhari pic|apni photo|tum kaisi lag rahi ho)\b', msg_lower)):
+            return 'selfie'
+            
         if 'dikhao' in msg_lower:
             return 'general'
+            
         return ''
 
     @staticmethod
