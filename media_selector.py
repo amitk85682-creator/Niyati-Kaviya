@@ -50,15 +50,19 @@ class MediaSelector:
             if request_type == 'spontaneous' and 'random_share' in media.use_for:
                 score += 2.0
                 
-            # Positive score means it's a candidate
-            if score > -5.0: # allow slightly penalized ones if nothing better
-                scored_media.append((score, media))
+            # Add to candidates
+            scored_media.append((score, media))
             
         if not scored_media:
             return None
             
+        # For spontaneous shares, if the best score is very bad (e.g. all heavily used), we might want to abort
+        # But for direct requests, we ALWAYS return the best available.
         # Sort by score descending
         scored_media.sort(key=lambda x: x[0], reverse=True)
+        
+        if request_type == 'spontaneous' and scored_media[0][0] < -3.0:
+            return None
         
         # Take top candidates and introduce slight variety
         top_score = scored_media[0][0]
