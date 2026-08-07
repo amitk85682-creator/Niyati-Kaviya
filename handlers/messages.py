@@ -489,7 +489,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id=user.id,
             is_group=is_group,
             current_scene=state.daily_life.location if 'state' in locals() and hasattr(state, 'daily_life') else None,
-            bot_context_text=None
+            bot_context_text=None,
+            state=state
         )
         
         selected_media_for_turn = None
@@ -497,8 +498,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if media_decision.should_send and media_decision.selected_media_id:
             all_media = await MediaVault.get_all_media(bot_name)
             selected_media_for_turn = next((m for m in all_media if m.media_id == media_decision.selected_media_id), None)
+            
             if selected_media_for_turn:
-                media_instruction = f"\n[SYSTEM: You MUST acknowledge sending a photo in your response. DO NOT make excuses (like phone dying). Photo context: scene={selected_media_for_turn.scene or 'unknown'}, outfit={selected_media_for_turn.outfit or 'unknown'}, mood={selected_media_for_turn.mood or 'unknown'}. Send the photo confidently!]"
+                if media_decision.reason.startswith("direct_request_yield"):
+                    media_instruction = f"\n[SYSTEM: The user begged for a photo multiple times, so you are FINALLY sending one now. Say something like 'achha baba ye lo, kitni zidd karte ho' or 'thik hai thik hai, karti hu send wait'. DO NOT act eager.]\n"
+                else:
+                    media_instruction = f"\n[SYSTEM: You MUST acknowledge sending a photo in your response. DO NOT make excuses (like phone dying). Photo context: scene={selected_media_for_turn.scene or 'unknown'}, outfit={selected_media_for_turn.outfit or 'unknown'}, mood={selected_media_for_turn.mood or 'unknown'}. Send the photo confidently!]\n"
+        elif media_decision.reason == "resist_1":
+            media_instruction = f"\n[SYSTEM: The user just asked for a photo, but this is the FIRST time they asked recently. You MUST strictly refuse to send a photo right now. Be natural, like 'Nahi bhejni', 'Aise hi thodi bhej dungi', or 'abhi mood nahi hai'. Do NOT agree to send it.]\n"
+        elif media_decision.reason == "resist_2":
+            media_instruction = f"\n[SYSTEM: The user is begging for a photo again. Try to playfully deflect or change the topic. E.g. 'kya karoge pic ka?', 'baad mein bhejungi yaar', 'kitna photo photo karte ho'. Do NOT agree to send it yet.]\n"
+        elif media_decision.reason.startswith("no_media_found_for"):
+            media_instruction = f"\n[SYSTEM: The user asked for a photo, but your media vault is EMPTY! You have NO photos to send. Say something like 'mere phone me abhi koi dhang ki photo nahi hai' or 'baad me bhejti hu yaar abhi nahi hai'. DO NOT generate fake links!]\n"
 
         psych_context = (
             f"Current psychological state:\n"
