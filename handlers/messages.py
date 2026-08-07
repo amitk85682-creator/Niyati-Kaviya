@@ -473,6 +473,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from media_vault import MediaVault
         from media_models import LastSharedMedia
         
+        req_type = MediaDecisionEngine._is_direct_request(user_message)
+        def media_req_mutator(s):
+            if req_type or 'dikhao' in user_message.lower():
+                s.dialogue.consecutive_media_requests += 1
+            elif len(user_message.split()) > 5:
+                s.dialogue.consecutive_media_requests = 0
+                
+        state = await state_manager.mutate_state(bot_name, chat.id, user.id, media_req_mutator)
+        
         media_decision = await MediaDecisionEngine.decide(
             bot_name=bot_name,
             user_message=user_message,
@@ -659,6 +668,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         media_sent = True
                         sent_msg_ids.append(sent_media.message_id)
                         await MediaVault.increment_use_count(selected_media_for_turn.media_id, bot_name)
+                        def media_req_reset_mutator(s):
+                            s.dialogue.consecutive_media_requests = 0
+                        await state_manager.mutate_state(bot_name, chat.id, user.id, media_req_reset_mutator)
+                        
                         last_shared_media_obj = LastSharedMedia(
                             bot_name=bot_name,
                             chat_id=chat.id,

@@ -54,7 +54,6 @@ class MediaDecisionEngine:
             
             # Apply resistance logic
             if state:
-                state.dialogue.consecutive_media_requests += 1
                 req_count = state.dialogue.consecutive_media_requests
                 
                 if req_count == 1:
@@ -63,9 +62,6 @@ class MediaDecisionEngine:
                 elif req_count == 2:
                     logger.info(f"[MediaDecision] bot={bot_name} should_send=False reason=resist_2")
                     return MediaDecision(should_send=False, reason="resist_2")
-                else:
-                    # 3rd time's the charm, yield and reset
-                    state.dialogue.consecutive_media_requests = 0
             
             media = await MediaSelector.select_media(
                 bot_name=bot_name, 
@@ -74,18 +70,10 @@ class MediaDecisionEngine:
             )
             
             if media:
-                logger.info(f"[MediaDecision] bot={bot_name} should_send=True reason=direct_request:{trigger_type}")
+                logger.info(f"[MediaDecision] bot={bot_name} should_send=True reason=direct_request_yield:{trigger_type}")
                 return MediaDecision(should_send=True, reason=f"direct_request_yield:{trigger_type}", selected_media_id=media.media_id, trigger_type=trigger_type, confidence=1.0)
             else:
                 return MediaDecision(should_send=False, reason=f"no_media_found_for:{trigger_type}")
-        elif state and state.dialogue.consecutive_media_requests > 0:
-            # If they stop asking (no trigger), gently decay or reset. 
-            # For simplicity, if they talk about something else, reset it.
-            # But wait, what if they say "pls bhej do"? That might not hit the regex.
-            # If it doesn't hit the regex, maybe we shouldn't reset instantly unless it's a completely different topic.
-            # We'll just reset it to 0 if it's a long message without any request keywords.
-            if len(user_message.split()) > 5:
-                state.dialogue.consecutive_media_requests = 0
                 
         # 2. Spontaneous share rules
         if last_shared:
