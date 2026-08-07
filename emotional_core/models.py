@@ -138,6 +138,7 @@ class DialogueState:
     stance: str = "NEUTRAL"
     consecutive_hostility_count: int = 0
     consecutive_love_count: int = 0
+    consecutive_media_requests: int = 0
     active_topic: str = ""
     active_topic_owner: str = ""
     last_user_intent: str = ""
