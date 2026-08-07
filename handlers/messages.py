@@ -456,7 +456,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_shared_media = await MediaMemory.get_last_shared(bot_name, chat.id, user.id)
         last_shared_str = ""
         if last_shared_media:
-            last_shared_str = f"- recently shared media: scene={last_shared_media.scene or 'unknown'}, outfit={last_shared_media.outfit or 'unknown'}, info={last_shared_media.caption_summary[:50]}\n"
+            last_shared_str = f"- CONTEXT: You recently sent the user a photo of yourself. (Details: scene={last_shared_media.scene or 'unknown'}, outfit={last_shared_media.outfit or 'unknown'}, mood={last_shared_media.mood or 'unknown'}). If they ask about the pic, confidently act like you know what they mean and reference these details naturally.\n"
 
         # [PHASE 2C] MEDIA DECISION (Done before AI generation)
         from media_decision_engine import MediaDecisionEngine
