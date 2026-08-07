@@ -232,7 +232,7 @@ class ConversationDirector:
                 explicit_target = "both"
                 reason = "explicit_both"
             elif _NIYATI_PAT.search(text) and not _PALAK_PAT.search(text):
-                if session.active_bot == "palak":
+                if session.active_bot == "palak" and any(w in text_lower for w in ["kaha", "kahan", "kaisi", "bula", "bulana", "where", "how", "kya kar"]):
                     resolved_intent = "ASK_ABOUT_OTHER_CHARACTER"
                     explicit_target = "palak"
                     reason = "ask_about_other:niyati"
@@ -242,7 +242,7 @@ class ConversationDirector:
                     explicit_target = "niyati"
                     reason = "explicit_name"
             elif _PALAK_PAT.search(text) and not _NIYATI_PAT.search(text):
-                if session.active_bot == "niyati":
+                if session.active_bot == "niyati" and any(w in text_lower for w in ["kaha", "kahan", "kaisi", "bula", "bulana", "where", "how", "kya kar"]):
                     resolved_intent = "ASK_ABOUT_OTHER_CHARACTER"
                     explicit_target = "niyati"
                     reason = "ask_about_other:palak"
