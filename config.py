@@ -62,6 +62,11 @@ class Config:
     GEMINI_API_KEYS_STR = os.getenv('GEMINI_API_KEYS', '')
     GEMINI_API_KEYS_LIST = [k.strip() for k in GEMINI_API_KEYS_STR.split(',') if k.strip()]
 
+    # OpenRouter
+    OPENROUTER_API_KEYS_STR = os.getenv('OPENROUTER_API_KEYS', '')
+    OPENROUTER_API_KEYS_LIST = [k.strip() for k in OPENROUTER_API_KEYS_STR.split(',') if k.strip()]
+    OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'sao10k/l3-lunaris-8b')
+
     # ── Supabase ──
     SUPABASE_URL = os.getenv('SUPABASE_URL', '')
     SUPABASE_KEY = os.getenv('SUPABASE_KEY', '')

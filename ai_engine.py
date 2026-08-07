@@ -56,9 +56,12 @@ class AIEngine:
         self.openai_keys = getattr(Config, 'API_KEYS_LIST', [])
         self.groq_keys = Config.GROQ_API_KEYS_LIST
         self.gemini_keys = Config.GEMINI_API_KEYS_LIST
+        self.openrouter_keys = getattr(Config, 'OPENROUTER_API_KEYS_LIST', [])
 
-        # Priority order: Groq (fast & free) → Gemini → OpenAI (fallback)
+        # Priority order: OpenRouter (sao10k/l3-lunaris-8b) → Groq → Gemini → OpenAI (fallback)
         self.all_keys = []
+        for k in self.openrouter_keys:
+            self.all_keys.append({"type": "openrouter", "key": k})
         for k in self.groq_keys:
             self.all_keys.append({"type": "groq", "key": k})
         for k in self.gemini_keys:
@@ -69,7 +72,7 @@ class AIEngine:
         self.current_index = 0
         self.client = None
         self._initialize_client()
-        logger.info(f"AI Engine: {len(self.groq_keys)} Groq, {len(self.gemini_keys)} Gemini, {len(self.openai_keys)} OpenAI keys")
+        logger.info(f"AI Engine: {len(self.openrouter_keys)} OpenRouter, {len(self.groq_keys)} Groq, {len(self.gemini_keys)} Gemini, {len(self.openai_keys)} OpenAI keys")
 
     def _initialize_client(self):
         """Initialize Client based on Key Type"""
@@ -86,6 +89,11 @@ class AIEngine:
                 base_url="https://api.groq.com/openai/v1",
                 api_key=current['key']
             )
+        elif current['type'] == "openrouter":
+            self.client = AsyncOpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=current['key']
+            )
 
         masked = current['key'][:8] + "..." + current['key'][-4:]
         logger.info(f"Current AI: {current['type'].upper()} | Key: {masked}")
@@ -100,7 +108,7 @@ class AIEngine:
 
     async def _call_gpt(self, messages: List[Dict], max_tokens: int = 350,
                          temp: float = 0.85) -> Optional[str]:
-        """Unified caller for OpenAI, Groq, and Gemini"""
+        """Unified caller for OpenAI, Groq, OpenRouter, and Gemini"""
         attempts = len(self.all_keys) if self.all_keys else 1
 
         for attempt_num in range(attempts):
@@ -109,9 +117,14 @@ class AIEngine:
 
             curr = self.all_keys[self.current_index]
             try:
-                # OpenAI or Groq
-                if curr['type'] in ["openai", "groq"]:
-                    model_name = "gpt-4o-mini" if curr['type'] == "openai" else Config.GROQ_MODEL
+                # OpenAI, Groq, or OpenRouter (all OpenAI-compatible)
+                if curr['type'] in ["openai", "groq", "openrouter"]:
+                    if curr['type'] == "openai":
+                        model_name = Config.OPENAI_MODEL
+                    elif curr['type'] == "groq":
+                        model_name = Config.GROQ_MODEL
+                    else:
+                        model_name = Config.OPENROUTER_MODEL
 
                     params = {
                         "model": model_name,
