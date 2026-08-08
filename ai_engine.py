@@ -20,7 +20,6 @@ from characters import get_character
 from memory import get_memory
 from utils import Mood, TimeAware
 from datetime import datetime, timezone
-from datetime import datetime, timezone
 
 
 BANNED_GENERIC_PHRASES = [
@@ -285,6 +284,12 @@ class AIEngine:
                 
             if "hum dono" in reply_lower or "humein" in reply_lower or "ja rahe hain" in reply_lower:
                 invalid = True
+
+            # Reject the model echoing the internal group-transcript format
+            # (e.g. "BOT | Palak | haan yaar") instead of a plain reply
+            if "human |" in reply_lower or "bot |" in reply_lower:
+                invalid = True
+                logger.warning(f"[{bot_name}] Rejected reply that leaked transcript format: '{reply_lower[:50]}'")
                 
             # Repeated filler phrases
             if any(p in reply_lower for p in ["chill karo", "gussa kyu", "gussa kiyon", "maaf kar do"]):
@@ -414,10 +419,11 @@ class AIEngine:
             return []
         return [reply.strip()]
 
-    async def generate_shayari(self, mood: str = "neutral") -> str:
+    async def generate_shayari(self, mood: str = "neutral") -> Optional[str]:
         """Generate a random shayari"""
         prompt = f"Write a 2 line heart-touching Hinglish shayari for {mood} mood."
         res = await self._call_gpt([{"role": "user", "content": prompt}], max_tokens=100, temp=0.9)
+        return res
 
     async def generate_geeta_quote(self) -> str:
         """Generate a Bhagavad Gita quote"""
@@ -429,29 +435,4 @@ class AIEngine:
         """Get random bonus content (shayari/meme)"""
         rand = random.random()
         if rand < Config.RANDOM_SHAYARI_CHANCE:
-            return await self.generate_shayari()
-        elif rand < Config.RANDOM_SHAYARI_CHANCE + Config.RANDOM_MEME_CHANCE:
-            return random.choice([
-                "Life is pain 🥲", "Moye Moye 💃", "Us moment 🤝",
-                "Kya logic hai? 🤦‍♀️", "Main toh vibe kar raha 😎"
-            ])
-        return None
-
-
-# ============================================================================
-# PER-BOT ENGINE REGISTRY
-# ============================================================================
-
-_engines: Dict[str, AIEngine] = {}
-
-
-def get_ai_engine(bot_name: str) -> AIEngine:
-    """
-    Get or create a persistent AIEngine instance for a specific bot.
-    Each bot gets its own engine with independent key rotation state.
-    """
-    bot_name = bot_name.lower()
-    if bot_name not in _engines:
-        _engines[bot_name] = AIEngine()
-        logger.info(f"AIEngine created for {bot_name}")
-    return _engines[bot_name]
+            retu
