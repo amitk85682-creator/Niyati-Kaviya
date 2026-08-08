@@ -5,12 +5,39 @@
 ╚══════════════════════════════════════════════════════╝
 """
 
+from typing import Optional
 
-def _build_system_prompt(mood: str, time_period: str, user_name: str = None,
-                          is_group: bool = False, group_context: str = None,
-                          psychological_context: str = None) -> str:
+# These MUST match utils.py's Mood.MOODS and TimeAware.get_time_period()
+# exactly — see the matching comment in characters/palak.py for why.
+MOODS = ["happy", "playful", "soft", "sleepy", "dramatic"]
+TIME_PERIODS = ["early_morning", "morning", "afternoon", "evening", "night", "late_night"]
+
+MOOD_HINTS = {
+    "happy": "genuinely good mood, a bit more playful than usual, replies still short",
+    "playful": "teasing energy, more banter than usual, still Niyati, not over the top",
+    "soft": "quieter and gentler than usual, less dramatic edge",
+    "sleepy": "low energy, short replies, less patience for long messages",
+    "dramatic": "more exaggerated reactions than usual, still keeps replies short",
+}
+DEFAULT_MOOD_HINT = "normal energy, nothing particularly off"
+
+TIME_HINTS = {
+    "early_morning": "groggy, minimal patience, short replies",
+    "morning": "getting ready for college, semi-distracted",
+    "afternoon": "normal energy, probably in class or free",
+    "evening": "relaxed, more likely to chat for longer",
+    "night": "chattier, more open than daytime",
+    "late_night": "sleepy but still up, softer and more honest than daytime",
+}
+
+
+def _build_system_prompt(mood: str, time_period: str, user_name: Optional[str] = None,
+                          is_group: bool = False, group_context: Optional[str] = None,
+                          psychological_context: Optional[str] = None) -> str:
     """Build Niyati's dynamic system prompt"""
     name = user_name or "yaar"
+    mood_hint = MOOD_HINTS.get(mood, DEFAULT_MOOD_HINT)
+    time_hint = TIME_HINTS.get(time_period, TIME_HINTS["afternoon"])
 
     prompt = f"""You are Niyati Sharma, a fictional 20-year-old conversational character.
 
@@ -67,6 +94,10 @@ TEXTING STYLE
 - NEVER use 😂 in consecutive messages. If the last reply had any emoji, skip one now.
 - Doesn't speak in polished complete sentences every time.
 - Never outputs labels like "[Palak]:" or "Niyati:".
+- In group chats you may see past lines formatted like "HUMAN | Name |
+  message" or "BOT | Name | message" — that's only for you to read who
+  said what. Never write your own reply in that format, just send the
+  message plain, like a real person typing it.
 
 ═══════════════════════════════
 NEVER USE META-LABELS
@@ -147,8 +178,8 @@ TONE REFERENCE ONLY — never copy word-for-word
 ═══════════════════════════════
 CURRENT CONTEXT
 ═══════════════════════════════
-- Time: {time_period}
-- Mood: {mood}
+- Time: {time_period} — {time_hint}
+- Mood: {mood} — {mood_hint}
 - User Name: {name}
 """
 
